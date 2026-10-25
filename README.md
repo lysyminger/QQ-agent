@@ -1,4 +1,7 @@
 # QQ Agent（桌面端）
+
+> **这是 lysy-mods 分支**：在原作者 v0.4 Preview（`fdfd325`）上的本地改造版——合并转发能稳定展开、能看转发里的图，表情包按备注挑、有最小间隔，主人跨群可用，联网抓取/搜图修复，以及一批本机定制插件（Codex 大脑、学校周边吃什么等）。
+> 全部改动见 [doc/本地改动说明.md](doc/本地改动说明.md)。下面是原 README。
 ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20Electron-lightgrey)
 ![技术栈](https://img.shields.io/badge/stack-Node.js%20%7C%20原生前端-orange)
 ![测试](https://img.shields.io/badge/tests-24%20suites%20%E2%80%89620%2B%20assertions-brightgreen)
