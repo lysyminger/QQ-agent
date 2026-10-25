@@ -105,6 +105,11 @@ export function mergeStickerLibrary(existing, fetched) {
   return out.filter((e) => e.source !== 'qq' || fetchedIds.has(e.id));
 }
 
+/** 备注以【别发】开头的表情：留在收藏里，但不列给模型、也不让发（低俗图、只想自己留着的图）。 */
+export function isHiddenSticker(e) {
+  return /^【别发】/.test(String(e?.desc || '')) || /^【别发】/.test(String(e?.localNote || ''));
+}
+
 export function findSticker(entries, ref) {
   const raw = String(ref ?? '').trim();
   if (!raw) return null;
@@ -121,7 +126,7 @@ export function findSticker(entries, ref) {
 }
 
 export function formatStickerList(entries, query = '', limit = 48) {
-  const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter(Boolean);
+  const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter((e) => e && !isHiddenSticker(e));
   const q = String(query ?? '').trim().toLowerCase();
   const filtered = q
     ? list.filter((e) => {
@@ -146,7 +151,7 @@ export function formatStickerList(entries, query = '', limit = 48) {
  * withId 未显式设置时，max <= 15 才附带 id，避免提示词无谓膨胀。
  */
 export function buildStickerContext(entries, max = 10, { rotatePeriodMin = 60, now = Date.now(), withId = Number(max) <= 15 } = {}) {
-  const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter(Boolean);
+  const list = (Array.isArray(entries) ? entries : []).map(normalizeStickerEntry).filter((e) => e && !isHiddenSticker(e));
   if (!list.length) return '';
   const total = Math.max(1, Math.min(30, Number(max) || 10));
   const byUse = [...list].sort((a, b) =>

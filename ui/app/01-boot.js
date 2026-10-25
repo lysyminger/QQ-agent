@@ -1,6 +1,29 @@
 // 〔启动 loading 壳 / 就绪体检 / 状态栏〕——M9 拆分第 2 段
 'use strict';
 // ── 状态栏 ──
+/**
+ * 模型路由插件上报的实时状态（日常/难题/故障切换/Codex 接管），顶栏和设置页侧栏共用。
+ * 没有插件上报时退回配置里的主模型。返回 { running, parts, tip }。
+ */
+function routeSummary(s) {
+  const route = Array.isArray(s?.route) ? s.route : [];
+  const active = new Set((s?.orchestrator?.activeSessions || []).map((a) => a.sessionId));
+  const running = route.flatMap((r) => r.running || []).filter((x) => x.live || active.has(x.sessionId));
+  const parts = route.map((r) => r.text).filter(Boolean);
+  return {
+    running: running.length ? `运行中：${[...new Set(running.map((x) => x.model))].join('、')}` : '',
+    parts: parts.length ? parts : [`模型：${s?.orchestrator?.model || '未设置'}`],
+    tip: [
+      ...running.map((x) => `正在用 ${x.model}${x.why ? `（${x.why}）` : ''}`),
+      ...route.flatMap((r) => r.lines || [])
+    ].join('\n')
+  };
+}
+
+function routeSummaryHtml(rs) {
+  return [rs.running, ...rs.parts].filter(Boolean).map((t) => `<div>${esc(t)}</div>`).join('');
+}
+
 async function refreshStatus() {
   try {
     state.status = await api('/api/status');
@@ -14,7 +37,13 @@ async function refreshStatus() {
       ? `OneBot 已连接${s.onebot.self ? `（${s.onebot.self.nickname}）` : ''}`
       : (s.onebot.diagnosis || 'OneBot 未连接');
     label.title = s.onebot.connected ? '' : (s.onebot.error || '');
-    $('#model-label').textContent = `模型：${s.orchestrator.model || '未设置'}`;
+    const rs = routeSummary(s);
+    const modelEl = $('#model-label');
+    modelEl.textContent = [rs.running, ...rs.parts].filter(Boolean).join(' ｜ ');
+    modelEl.title = rs.tip;
+    // 设置页侧栏的「机器人运行状态」卡片同步刷新（卡片只在打开设置页时渲染一次）
+    const sideModel = document.querySelector('.settings-runstate .rs-model');
+    if (sideModel) sideModel.innerHTML = state.paused ? '⏸ 已暂停' : routeSummaryHtml(rs);
     const u = s.usage;
     // 成本：官方价匹配得上就显示；匹配不上（中转站常见）只显示 token，不显示误导性的 ¥0
     const c = s.cost;
@@ -124,3 +153,6 @@ function scheduleSessionRender() {
     }
   }, 80);
 }
+
+// 顶栏状态定时刷新：路由插件的故障切换 / Codex 模式等变化没有 SSE 事件，靠轮询跟上（窗口不可见时不刷）
+setInterval(() => { if (!document.hidden) refreshStatus(); }, 5000);

@@ -38,6 +38,25 @@ import { detectDialect as detectThinkingDialect } from './thinking.js';
  * 构建路由表。
  * @param {object} deps 依赖注入
  */
+/**
+ * 插件上报的"模型路由"实时状态，给顶栏显示：收集所有 status.<插件> 能力里带 route 字段的结果。
+ * route = { text: 顶栏一句话, running: [{ sessionId, model, why, live? }], lines: [悬停详情] }
+ * 只收同步返回的结果；上报出错不影响状态接口。
+ */
+function routeStatus() {
+  const out = [];
+  for (const cap of skillManager.capabilities.list()) {
+    if (!cap.startsWith('status.')) continue;
+    for (const p of skillManager.getCapabilityProviders(cap, {})) {
+      try {
+        const r = p.fn();
+        if (r && typeof r.then !== 'function' && r.route) out.push({ ...r.route, skillId: p.skillId });
+      } catch { /* 忽略 */ }
+    }
+  }
+  return out;
+}
+
 export function createRoutes(deps) {
   const {
     store, memory, sessions, onebot, orchestrator,
@@ -125,6 +144,7 @@ export function createRoutes(deps) {
           },
           qqPortable: await qqPortableStatus(),
           orchestrator: orchestrator.statusSummary(),
+          route: routeStatus(),
           usage,
           cost,
           cacheHitRate: cacheHitRate(usage),

@@ -110,8 +110,20 @@ export class ChatStore {
   }
 
   /** 记录机器人自己发出的消息（已读）。 */
-  appendSelf(chatKey, { text, ts, mid = null }) {
+  appendSelf(chatKey, { text, ts, mid = null, media = [], echo = false }) {
     const st = this.#state(chatKey);
+    // 同一条消息只留一份：回显补记（echo）先到、sender 留档后到时，用 sender 的（带本地文件 / 备注）覆盖
+    if (mid != null) {
+      const prev = st.messages.find((m) => m.self && String(m.mid) === String(mid));
+      if (prev) {
+        if (prev.echo && !echo) {
+          Object.assign(prev, { text: String(text ?? ''), media: Array.isArray(media) ? media : [] });
+          delete prev.echo;
+          saveChat(st);
+        }
+        return prev;
+      }
+    }
     const entry = {
       id: st.nextLocalId++,
       mid: mid ?? null,
@@ -122,7 +134,8 @@ export class ChatStore {
       self: true,
       read: true,
       reply: null,
-      media: []
+      media: Array.isArray(media) ? media : [],
+      ...(echo ? { echo: true } : {})
     };
     st.messages.push(entry);
     this.#trim(st);
@@ -273,13 +286,15 @@ export class ChatStore {
    * 按 QQ 消息 id 更新一条已存档消息（文本/补媒体），并落盘。
    * 用途：read_forward 工具把"合并转发占位符"永久升级成展开后的文本
    * —— 一次展开，以后谁（模型/存档页/金句）都直接读到内容。
+   * replaceMedia：整组换掉媒体（转发里的图片链接过期后，重新取转发换上新链接）。
    */
-  updateByMid(chatKey, mid, { text, appendMedia = [] } = {}) {
+  updateByMid(chatKey, mid, { text, appendMedia = [], replaceMedia = null } = {}) {
     const st = this.#state(chatKey);
     const target = String(mid);
     const m = st.messages.find((x) => String(x.mid) === target);
     if (!m) return false;
     if (text != null) m.text = String(text);
+    if (Array.isArray(replaceMedia)) m.media = [...replaceMedia];
     if (appendMedia.length) {
       m.media = Array.isArray(m.media) ? m.media : [];
       const seen = new Set(m.media.map((x) => x && x.url));

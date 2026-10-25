@@ -207,7 +207,30 @@ export function isRetryableError(error) {
  *   额外带 _usedModel（实际成功的模型 id）与 _usedApi（实际使用的端点配置），
  *   调用方据此同步 session.model / session.vendor，保证成本看板的「渠道:模型」同源。
  */
+/** 插件据此判断核心是否支持 llm.agent-backend（旧核心没有这个导出）。 */
+export const AGENT_BACKEND_SUPPORTED = true;
+
 export async function chatCompletionWithRetry(args, retries = 2) {
+  // ── 外部智能体接管（llm.agent-backend）──
+  // 插件（如 codex-bridge 的「Codex 大脑」）认领这次调用时返回结果 Promise，这里就不走 HTTP 模型。
+  // 它自己负责重试；失败时退回下面的正常模型，保证机器人不会因为外部智能体挂了就不说话。
+  for (const p of skillManager.getCapabilityProviders('llm.agent-backend', {})) {
+    let handled = null;
+    try { handled = p.fn(args); } catch (error) { skillManager.recordError('llm.agent-backend', error); }
+    if (!handled) continue;
+    try {
+      const r = await handled;
+      r._usedModel = r.model || '';
+      // 渠道单独记成本机 Codex（订阅额度），别算到配置里的 HTTP 网关头上
+      r._usedApi = { provider: 'agent-backend', baseUrl: 'http://codex-cli.local', model: r.model || '' };
+      return r;
+    } catch (error) {
+      if (args?.signal?.aborted) throw error;
+      skillManager.recordError('llm.agent-backend', error);
+      console.warn(`[llm] 外部智能体失败，退回普通模型：${error?.message ?? error}`);
+    }
+    break;
+  }
   const candidates = buildCandidateApis();
   let lastError = null;
 
@@ -277,7 +300,8 @@ export async function chatCompletion({ messages, tools = null, toolChoice = 'aut
     // 备选模型降级路径（overrides 非空）刻意**不**走池：那些候选是用户显式排队指定的。
     try {
       for (const p of skillManager.getCapabilityProviders('llm.endpoint-pick', {})) {
-        const picked = p.fn({ model: baseApi.model });
+        // messages / context 供"按难度选模型"一类的路由插件判断；只看 model 的旧插件不受影响
+        const picked = p.fn({ model: baseApi.model, messages, context: skillContext || {} });
         if (picked?.baseUrl) {
           poolAccountId = picked.id || '';
           api = {

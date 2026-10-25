@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getConfig, updateConfig, ROOT, DATA_DIR } from './config.js';
-import { OneBotClient, segmentsToText, extractMediaFromSegments, expandForwardNodes } from './onebot.js';
+import { OneBotClient, segmentsToText, extractMediaFromSegments, expandForwardNodes, fetchForwardNodes, forwardIdFromData } from './onebot.js';
 import { isAtMe } from './prompt.js';
 import { ChatStore } from './store.js';
 import { MemoryStore } from './memory.js';
@@ -51,6 +51,15 @@ function allowed(kind, id, cfg) {
   const allowList = cfg.allow?.[kind] ?? cfg.allow?.[`${kind}s`] ?? [];
   if (allowList.length > 0) return allowList.map(String).includes(s);
   return cfg.allowAllWhenEmpty === true;
+}
+
+// 主人（owner-identity 里配的 QQ 号）不受白名单限制：在哪个群都能叫到机器人。
+// 只放行主人本人的消息，同群其他人照旧按白名单丢弃；黑名单（deny）仍然生效。
+function ownerAnywhere(kind, id, senderId, cfg) {
+  const oi = cfg.skills?.['owner-identity'];
+  if (!oi || oi.enabled === false || !senderId) return false;
+  if ((cfg.deny?.[kind] ?? cfg.deny?.[`${kind}s`] ?? []).map(String).includes(String(id))) return false;
+  return String(oi.ids || '').split(/[,，\s]+/).filter(Boolean).includes(String(senderId));
 }
 
 // ── 版本更新检查 ─────────────────────────────────────────────────────
@@ -803,7 +812,26 @@ export function createApp({ log = console.log } = {}) {
     return null;
   }
 
-  async function resolveReply(messageId) {
+  // 存档里那条的正文（[视频:标题]、[表情包]、卡片展开的标题…）比 get_msg 回来的 [video] / [image] 有用得多；
+  // 它自己带的 [引用 …] 块剥掉，免得引用套引用
+  function localQuoteText(entry) {
+    let s = String(entry?.text || '');
+    while (s.startsWith('[引用')) {
+      let depth = 0;
+      let end = -1;
+      for (let i = 0; i < s.length; i++) {
+        if (s[i] === '[') depth += 1;
+        else if (s[i] === ']' && --depth === 0) { end = i; break; }
+      }
+      if (end < 0) break;
+      s = s.slice(end + 1).trim();
+    }
+    return s;
+  }
+
+  async function resolveReply(messageId, chatKey = '') {
+    let local = null;
+    try { local = chatKey ? store.findByMid(chatKey, messageId) : null; } catch { local = null; }
     try {
       const msg = await onebot.getMsg(messageId);
       const senderName = msg?.sender?.card || msg?.sender?.nickname || '';
@@ -813,20 +841,28 @@ export function createApp({ log = console.log } = {}) {
       } else if (typeof msg?.message === 'string') {
         text = msg.message;
       }
+      if (local && localQuoteText(local)) text = localQuoteText(local);
       // senderId 一并带回：引用块显示为 名字(QQ:xxx)，与发言人标签同口径 ——
       // 没有它，模型分不清引用的是"哪个张三"
-      return { sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: String(text).slice(0, 120) };
+      return { sender: String(senderName), senderId: String(msg?.sender?.user_id ?? ''), text: String(text).slice(0, 120), mid: String(messageId) };
     } catch {
-      return null;
+      if (!local) return null;
+      return {
+        sender: local.self ? String(onebot.selfNickname || getConfig().persona?.botName || '我') : String(local.senderName || ''),
+        senderId: local.self ? String(onebot.selfId || '') : String(local.senderId || ''),
+        text: localQuoteText(local).slice(0, 120),
+        mid: String(messageId)
+      };
     }
   }
 
   async function ingestMessage(kind, id, event) {
     const cfgNow = getConfig();
-    if (!allowed(kind, id, cfgNow)) return; // 白名单外的聊天完全不记录
+    const senderId = String(event.sender?.user_id ?? event.user_id ?? '');
+    // 白名单外的聊天完全不记录（主人本人的消息除外）
+    if (!allowed(kind, id, cfgNow) && !ownerAnywhere(kind, id, senderId, cfgNow)) return;
 
     const segments = Array.isArray(event.message) ? event.message : null;
-    const senderId = String(event.sender?.user_id ?? event.user_id ?? '');
     const senderName = String(event.sender?.card || event.sender?.nickname || senderId || '');
 
     // 屏蔽名单：被屏蔽群员的消息直接丢弃 —— 不存档、不触发会话、不进提示词背景。
@@ -838,12 +874,33 @@ export function createApp({ log = console.log } = {}) {
       if (kind === 'group' && (cfgNow.blocklist?.[id] || []).map(String).includes(senderId)) return;
     }
     const media = segments ? extractMediaFromSegments(segments) : [];
+    // 以"文件"形式发的照片（原图、电脑拖进来的 IMG_xxx.JPG）：换个直链当普通图片收进 media，
+    // 模型才看得到；换不到直链就只留 [文件xxx] 占位，不影响原流程
+    for (const seg of segments || []) {
+      const d = seg?.data ?? {};
+      const name = String(d.name ?? d.file ?? '');
+      if (seg?.type !== 'file' || !/\.(jpe?g|png|webp|gif)$/i.test(name)) continue;
+      if (Number(d.file_size ?? d.size ?? 0) > 20 * 1024 * 1024) continue;
+      try {
+        let url = String(d.url ?? '');
+        const fileId = String(d.file_id ?? d.id ?? '');
+        if (!/^https?:/i.test(url) && fileId) {
+          const r = kind === 'group'
+            ? await onebot.call('get_group_file_url', { group_id: Number(id), file_id: fileId })
+            : await onebot.call('get_private_file_url', { user_id: Number(senderId || 0), file_id: fileId, file_hash: String(d.file_hash ?? '') });
+          url = String(r?.url || '');
+        }
+        if (/^https?:/i.test(url)) media.push({ kind: 'image', file: name, url, summary: '[图片]' });
+      } catch (e) {
+        log(`[ingest] 图片文件 ${name} 换直链失败：${e?.message ?? e}`);
+      }
+    }
 
     let text;
     const atMarks = [];   // @ 段收集（qq + 渲染原文）：档位判定的权威依据（2026-09-26）
     if (segments) {
       text = await segmentsToText(segments, {
-        resolveReply: (mid) => resolveReply(mid),
+        resolveReply: (mid) => resolveReply(mid, `${kind}:${id}`),
         resolveAtName: (qq) => kind === 'group' ? resolveAtName(id, qq) : null,
         onAt: (m) => atMarks.push(m),
         // 语音转写（`media.transcribe`）要用它去 get_record 取音频
@@ -854,14 +911,13 @@ export function createApp({ log = console.log } = {}) {
     }
 
     // 合并转发：占位符 → 展开真实内容（模型要读懂、看懂转发的聊天记录）
-    // 实测结论（2026-09-05，SnowLuma/NapCat）：get_forward_msg 只认 message_id；
-    // res_id（转发卡片里那个 id）会过期，报 "payload is empty"。
+    // message_id 和转发段里的 id 都可能报 "payload is empty"，fetchForwardNodes 两种都试。
     // 媒体里的 url 此时是新鲜的，一并收进 media（取图/金句都能用）。
     // 展开失败时占位符留在存档里，模型可用 read_forward 工具稍后重试。
     if (segments && (text.includes('[合并转发') || text.includes('[转发消息')) && event.message_id != null) {
       try {
-        const r = await onebot.call('get_forward_msg', { message_id: Number(event.message_id) });
-        const nodes = Array.isArray(r?.messages) ? r.messages : (Array.isArray(r?.data?.messages) ? r.data.messages : []);
+        const resIds = segments.filter((s) => s?.type === 'forward').map((s) => forwardIdFromData(s.data)).filter(Boolean);
+        const nodes = await fetchForwardNodes(onebot, event.message_id, resIds);
         const ex = await expandForwardNodes(nodes);
         if (ex && ex.text) {
           text = ex.text;
@@ -976,9 +1032,9 @@ export function createApp({ log = console.log } = {}) {
     const isGroup = event.group_id != null;
     const id = isGroup ? String(event.group_id) : String(event.user_id);
     const cfgNow = getConfig();
-    if (!allowed(isGroup ? 'group' : 'private', id, cfgNow)) return;
-
     const operatorId = String(event.user_id ?? '');
+    if (!allowed(isGroup ? 'group' : 'private', id, cfgNow) && !ownerAnywhere(isGroup ? 'group' : 'private', id, operatorId, cfgNow)) return;
+
     // 自己拍的拍（send_poke 的 OneBot 回显）不触发处理——与 message_sent 同理，发送时已留档
     if (operatorId && operatorId === onebot.selfId) return;
     // 屏蔽名单对拍一拍同样生效（操作者是被屏蔽群员则丢弃）：全局优先，其次按群
@@ -1033,11 +1089,38 @@ export function createApp({ log = console.log } = {}) {
     orchestrator.onIncoming(`${isGroup ? 'group' : 'private'}:${id}`, entry);
   }
 
+  // 机器人号自己发的消息回显：sender 发的会在拿到 message_id 后立刻留档，所以等几秒再看库里有没有这个 id，
+  // 没有就是外部发的，补记成自己说的话（已读、不触发回复）
+  async function recordSelfEcho(event) {
+    const isGroup = event.message_type === 'group' && event.group_id != null;
+    const id = String(isGroup ? event.group_id : (event.target_id ?? event.user_id ?? ''));
+    if (!id || event.message_id == null || (!isGroup && event.message_type !== 'private')) return;
+    if (!isGroup && id === onebot.selfId) return;   // 私聊回显拿不到对方 QQ 号时不乱记
+    const kind = isGroup ? 'group' : 'private';
+    if (!allowed(kind, id, getConfig())) return;
+    const chatKey = `${kind}:${id}`;
+    await new Promise((r) => setTimeout(r, 4000));
+    if (store.findByMid(chatKey, event.message_id)) return;
+    try {
+      const segments = Array.isArray(event.message) ? event.message : null;
+      const media = segments ? extractMediaFromSegments(segments) : [];
+      const text = segments
+        ? await segmentsToText(segments, { resolveReply: (mid) => resolveReply(mid, chatKey), resolveAtName: (qq) => isGroup ? resolveAtName(id, qq) : null })
+        : String(event.raw_message ?? event.message ?? '').trim();
+      if (!text && !media.length) return;
+      store.appendSelf(chatKey, { text, ts: Number(event.time) ? Number(event.time) * 1000 : Date.now(), mid: event.message_id, media, echo: true });
+      log(`[ingest] 补记一条不是经 sender 发出的自己的消息 ${chatKey} #${event.message_id}`);
+    } catch (e) {
+      log(`[ingest] 补记自己的消息失败：${e?.message ?? e}`);
+    }
+  }
+
   async function handleOneBotEvent(event) {
     if (!event || typeof event !== 'object') return;
     if (event.post_type === 'message' || event.post_type === 'message_sent') {
-      // 自己发的消息（message_sent / self_id 相同）不触发处理（发送时已自行记录）
-      if (String(event.user_id ?? event.sender?.user_id ?? '') === onebot.selfId) return;
+      // 自己发的消息（message_sent / self_id 相同）不触发处理（发送时已自行记录）；
+      // 不是经 sender 发的（手机 QQ 上用机器人号发的、外部脚本直接调接口发的）补记一份，免得它不知道自己说过
+      if (String(event.user_id ?? event.sender?.user_id ?? '') === onebot.selfId) return recordSelfEcho(event);
       if (event.message_type === 'group' && event.group_id != null) return ingestMessage('group', String(event.group_id), event);
       if (event.message_type === 'private' && event.user_id != null) return ingestMessage('private', String(event.user_id), event);
       return;

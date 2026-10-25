@@ -403,7 +403,9 @@ export async function customSearch(query, providerId = null) {
     .map((r) => ({
       title: String(r.title ?? r.name ?? r.headline ?? '').trim() || '（无标题）',
       url: String(r.url ?? r.link ?? ''),
-      snippet: String(r.content ?? r.snippet ?? r.summary ?? r.body ?? '').trim()
+      // 用 || 而不是 ??：DeepSeek Search 等接口在不要正文时返回 content: ""（空串不是 nullish），
+      // 用 ?? 会停在空串上、摘要全丢。长摘要（summary）比短摘要更适合给模型读，排在 snippet 前面。
+      snippet: String(r.content || r.summary || r.snippet || r.body || '').trim()
     }))
     .slice(0, Math.max(1, Number(getConfig().webSearch?.maxResults) || 6));
   if (!results.length) {
@@ -527,30 +529,43 @@ export function extractPageDigest(html, _baseUrl = '', { maxChars = 6000, maxLin
  * Bing 把这两者塞在 `m="{\"murl\":\"...\",\"turl\":\"...\"}"` 这样的 JSON 属性里。
  * 解析失败就抛错（页面改版了），由调用方决定降级。
  */
+// 图搜结果页的图片数据在 HTML 后半段，按 safeFetch 默认的 50000 字符截断会一张都解析不到
+const IMAGE_SEARCH_PAGE_BYTES = 3 * 1024 * 1024;
+
 export async function bingImageSearch(query, { limit = 8, browseLocked = false } = {}) {
   const q = String(query ?? '').trim();
   if (!q) throw new Error('搜索关键词为空');
-  const url = `https://cn.bing.com/images/search?q=${encodeURIComponent(q)}&form=HDRSC2`;
-  // 图搜是"搜索阶段"，也必须受浏览锁定约束，否则锁定只挡下载不挡搜索，链条断一环
-  const { body } = await safeFetch(url, { browseLocked });
-  const html = String(body ?? '');
   const out = [];
   const seen = new Set();
-  for (const m of html.matchAll(/m="([^"]+)"/g)) {
-    const raw = decodeHtml(m[1]).replace(/&quot;/g, '"');
-    let url2 = '';
-    try {
-      const j = JSON.parse(raw);
-      url2 = String(j.murl || j.mediaurl || '').trim();
-    } catch {
-      // 属性里偶尔不是合法 JSON（被截断），用正则兜一次
-      const mm = raw.match(/"murl"\s*:\s*"([^"]+)"/);
-      url2 = mm ? mm[1] : '';
+  // 搜索页经常只返回个空壳（结果靠 JS 再加载），空了再试一次它的 async 接口
+  for (const url of [
+    `https://cn.bing.com/images/search?q=${encodeURIComponent(q)}&form=HDRSC2`,
+    `https://cn.bing.com/images/async?q=${encodeURIComponent(q)}&first=0&count=35&mmasync=1`
+  ]) {
+    if (out.length) break;
+    // 图搜是"搜索阶段"，也必须受浏览锁定约束，否则锁定只挡下载不挡搜索，链条断一环
+    const { body } = await safeFetch(url, { browseLocked, maxBytes: IMAGE_SEARCH_PAGE_BYTES });
+    const html = String(body ?? '');
+    for (const m of html.matchAll(/m="([^"]+)"/g)) {
+      const raw = decodeHtml(m[1]).replace(/&quot;/g, '"');
+      let url2 = '';
+      let title = '';
+      let page = '';
+      try {
+        const j = JSON.parse(raw);
+        url2 = String(j.murl || j.mediaurl || '').trim();
+        title = String(j.t || '').trim();   // t = 来源页标题，purl = 来源页地址
+        page = String(j.purl || '').trim();
+      } catch {
+        // 属性里偶尔不是合法 JSON（被截断），用正则兜一次
+        const mm = raw.match(/"murl"\s*:\s*"([^"]+)"/);
+        url2 = mm ? mm[1] : '';
+      }
+      if (!/^https?:\/\//i.test(url2) || seen.has(url2)) continue;
+      seen.add(url2);
+      out.push({ title, url: url2, ...(page ? { page } : {}) });
+      if (out.length >= Math.max(1, Number(limit) || 8)) break;
     }
-    if (!/^https?:\/\//i.test(url2) || seen.has(url2)) continue;
-    seen.add(url2);
-    out.push({ title: q, url: url2 });
-    if (out.length >= Math.max(1, Number(limit) || 8)) break;
   }
   if (!out.length) throw new Error('Bing 图片搜索没解析到结果（页面结构可能已改版）');
   return out;
@@ -561,17 +576,27 @@ export async function baiduImageSearch(query, { limit = 8, browseLocked = false 
   const q = String(query ?? '').trim();
   if (!q) throw new Error('搜索关键词为空');
   const url = `https://image.baidu.com/search/index?tn=baiduimage&word=${encodeURIComponent(q)}`;
-  const { body } = await safeFetch(url, { browseLocked });
+  const { body } = await safeFetch(url, { browseLocked, maxBytes: IMAGE_SEARCH_PAGE_BYTES });
   const html = String(body ?? '');
   const out = [];
   const seen = new Set();
   for (const key of ['objURL', 'middleURL', 'thumbURL', 'hoverURL']) {
-    const re = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'g');
+    const re = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'gi');   // 百度改版后字段变成了小写 objurl / thumburl
     for (const m of html.matchAll(re)) {
-      const u = decodeHtml(m[1]).replace(/\\\//g, '/');
-      if (!/^https?:\/\//i.test(u) || seen.has(u)) continue;
+      const u = decodeHtml(m[1]).replace(/\\\//g, '/').replace(/\\u0026/g, '&');
+      // 新版 objurl 偶尔是商品 / 网页地址而不是图片
+      if (!/^https?:\/\//i.test(u) || /\.(html?|php)(\?|$)/i.test(u) || seen.has(u)) continue;
       seen.add(u);
-      out.push({ title: q, url: u });
+      // 这条结果后面紧跟着来源页标题和地址（titleShow / fromUrl），拿来判断图是不是要找的那个
+      // 同一条结果里 objurl 会出现两次（replaceUrl 里一次），所以往后找到标题为止、中间不能夹着别的图的地址
+      const tail = html.slice(m.index + m[0].length, m.index + 6000);
+      const tm = tail.match(/"(?:titleShow|fromPageTitleEnc|fromPageTitle)"\s*:\s*"([^"]*)"/);
+      const between = tm ? tail.slice(0, tm.index) : '';
+      const otherImg = [...between.matchAll(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'gi'))].some((x) => x[1] !== m[1]);
+      const title = tm && !otherImg ? decodeHtml(tm[1]).replace(/<[^>]+>/g, '').trim() : '';
+      const page = (otherImg ? '' : (between.match(/"fromUrl"\s*:\s*"([^"]+)"/)?.[1] || '')).replace(/\\\//g, '/').replace(/\\u0026/g, '&');
+      // 标题为空就留空（别拿搜索词顶上，否则看着像"标题对得上"）
+      out.push({ title, url: u, ...(page ? { page } : {}) });
       if (out.length >= Math.max(1, Number(limit) || 8)) break;
     }
     if (out.length >= Math.max(1, Number(limit) || 8)) break;
@@ -591,15 +616,126 @@ export async function searchImages(query, { limit = 8, browseLocked = false } = 
   if (!q) throw new Error('搜索关键词为空');
   const n = Math.max(1, Math.min(12, Number(limit) || 8));
   const errors = [];
+  // B 站专栏同时查：二次元角色在专栏里的图往往比百度准（失败不影响百度 / Bing）
+  const biliP = biliArticleImageSearch(q, { limit: n, browseLocked }).catch((error) => { errors.push(`B站专栏: ${error?.message ?? error}`); return []; });
   // 顺序：百度在前（中文关键词命中率更好），Bing 兜底
+  let list = [];
   for (const fn of [baiduImageSearch, bingImageSearch]) {
     try {
-      const list = await fn(q, { limit: n, browseLocked });
-      if (list.length) return list;
+      list = await fn(q, { limit: n, browseLocked });
+      if (list.length) break;
     } catch (error) {
       errors.push(`${fn.name}: ${error?.message ?? error}`);
     }
   }
+  const bili = await biliP;
+  if (bili.length) {
+    // 两边交替排：专栏图带着专栏标题，标题对得上的在调用方那里还会再往前排
+    const merged = [];
+    const seen = new Set();
+    for (let i = 0; merged.length < n && (i < bili.length || i < list.length); i++) {
+      for (const r of [bili[i], list[i]]) if (r && !seen.has(r.url) && merged.length < n) { seen.add(r.url); merged.push(r); }
+    }
+    return merged;
+  }
+  if (list.length) return list;
   throw new Error(`图片搜索全部失败 —— ${errors.join('；')}`);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// B 站专栏（二次元角色 / 梗的资料和图，B 站往往比百科全）
+// ══════════════════════════════════════════════════════════════════════════
+// 匿名调接口要带随机 buvid3；和群里的 B 站视频解析共用一个 IP，所以自己节流：
+// 两次调用至少隔 BILI_GAP_MS，被风控（412 / 返回 HTML）就整体歇 BILI_COOLDOWN_MS。
+const BILI_GAP_MS = 4000;
+const BILI_COOLDOWN_MS = 10 * 60 * 1000;
+const BILI_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
+const biliState = { last: 0, blockedUntil: 0, buvid: '', chain: Promise.resolve() };
+const stripTags = (s) => decodeHtml(String(s ?? '').replace(/<[^>]+>/g, '')).trim();
+const httpsUrl = (u) => { const s = String(u || '').trim(); return s.startsWith('//') ? `https:${s}` : s.replace(/^http:\/\//i, 'https://'); };
+
+function biliApi(url, { browseLocked = false } = {}) {
+  // "请求过于频繁"（-799）是临时限流、-352 是 buvid 被盯上：等几秒（换个 buvid）重试一次；再不行才报错
+  return biliApiOnce(url, { browseLocked }).catch(async (e) => {
+    if (!/频繁|-799|-352/.test(String(e?.message))) throw e;
+    await new Promise((r) => setTimeout(r, 6000));
+    return biliApiOnce(url, { browseLocked });
+  });
+}
+
+function biliApiOnce(url, { browseLocked = false } = {}) {
+  // 串行 + 间隔：并发的几次搜索也一个一个来
+  const run = biliState.chain.then(async () => {
+    if (Date.now() < biliState.blockedUntil) throw new Error('B 站接口刚被风控，歇一会儿再查');
+    const wait = biliState.last + BILI_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    biliState.last = Date.now();
+    // buvid3 要是标准 UUID 格式，格式不对必被 -352 拦
+    if (!biliState.buvid) biliState.buvid = `${globalThis.crypto.randomUUID().toUpperCase()}infoc`;
+    const { body, statusCode } = await safeFetch(url, {
+      browseLocked, maxBytes: 2 * 1024 * 1024, timeoutMs: 15000,
+      headers: { 'user-agent': BILI_UA, referer: 'https://www.bilibili.com/', cookie: `buvid3=${biliState.buvid}` }
+    });
+    const text = String(body ?? '');
+    if (statusCode === 412 || !text.trim().startsWith('{')) {
+      biliState.blockedUntil = Date.now() + BILI_COOLDOWN_MS;
+      throw new Error(`B 站接口被风控（HTTP ${statusCode}），${BILI_COOLDOWN_MS / 60000} 分钟内不再查`);
+    }
+    const j = JSON.parse(text);
+    // -352 风控校验：这个 buvid 被盯上了，换一个（外层会重试一次）
+    if (j.code === -352) biliState.buvid = '';
+    if (j.code !== 0) throw new Error(`B 站接口：${j.message || j.code}`);
+    return j.data;
+  });
+  biliState.chain = run.catch(() => {});
+  return run;
+}
+
+/** 搜 B 站专栏：[{ id, title, desc, url, images }]（标题、摘要已去掉高亮标签）。 */
+export async function biliArticleSearch(query, { limit = 8, browseLocked = false } = {}) {
+  const q = String(query ?? '').trim();
+  if (!q) throw new Error('搜索关键词为空');
+  const data = await biliApi(`https://api.bilibili.com/x/web-interface/search/type?search_type=article&keyword=${encodeURIComponent(q)}`, { browseLocked });
+  // B 站按字拆词，搜「四宫宁月」会混进只沾了「宫」「宁」的无关专栏：标题 / 摘要里完整出现关键词的才留，一条都没有才全给
+  const flat = (x) => stripTags(x).toLowerCase().replace(/s+/g, '');
+  const words = q.toLowerCase().split(/s+/).filter((w) => w.length >= 2);
+  const all = data?.result || [];
+  const rel = all.filter((a) => words.some((w) => flat(a.title).includes(w) || flat(a.desc).includes(w)));
+  return (rel.length ? rel : all).slice(0, Math.max(1, Number(limit) || 8)).map((a) => ({
+    id: String(a.id),
+    title: stripTags(a.title),
+    desc: stripTags(a.desc).slice(0, 160),
+    url: `https://www.bilibili.com/read/cv${a.id}`,
+    images: (a.image_urls || []).map(httpsUrl).filter((u) => /^https:\/\//.test(u))
+  }));
+}
+
+/** 专栏配图当图搜结果用：{ title: 专栏标题, url: 图, page: 专栏地址 }。 */
+export async function biliArticleImageSearch(query, { limit = 8, browseLocked = false } = {}) {
+  const list = await biliArticleSearch(query, { limit, browseLocked });
+  const out = [];
+  for (const a of list) for (const u of a.images.slice(0, 2)) if (out.length < limit) out.push({ title: a.title, url: u, page: a.url });
+  return out;
+}
+
+/** 读一篇 B 站专栏（cv 号或链接）：{ id, title, author, text, images, url }。正文是纯文字，配图按出现顺序。 */
+export async function biliArticleRead(idOrUrl, { browseLocked = false, maxChars = 4000 } = {}) {
+  const id = String(idOrUrl ?? '').match(/(?:cv)?(\d{4,})/i)?.[1];
+  if (!id) throw new Error('专栏 id 不对（要 cv 号或专栏链接）');
+  const d = await biliApi(`https://api.bilibili.com/x/article/view?id=${id}`, { browseLocked });
+  const images = [];
+  for (const p of d?.opus?.content?.paragraphs || []) for (const pic of p?.pic?.pics || []) if (pic?.url) images.push(httpsUrl(pic.url));
+  for (const u of [...(d?.image_urls || []), ...(d?.origin_image_urls || [])]) if (u && !images.includes(httpsUrl(u))) images.push(httpsUrl(u));
+  let text = String(d?.content || '');
+  // 老专栏 content 是 HTML，新的（opus）是纯文字
+  if (/<\/?(p|br|figure|img)\b/i.test(text)) text = stripTags(text.replace(/<br\s*\/?>|<\/p>/gi, '\n'));
+  return {
+    id,
+    title: String(d?.title || ''),
+    author: String(d?.author?.name || ''),
+    text: text.slice(0, maxChars),
+    images: images.slice(0, 12),
+    url: `https://www.bilibili.com/read/cv${id}`
+  };
 }
 

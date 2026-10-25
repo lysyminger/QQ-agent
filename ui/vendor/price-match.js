@@ -14,7 +14,8 @@
 export function matchPriceTable(modelId, table) {
   const raw = String(modelId || '').trim();
   if (!raw) return null;
-  const id = raw.toLowerCase();
+  // 旧版 codex-bridge 记的「Codex gpt-6-luna·xhigh」统一成 codex/gpt-6-luna（同后端 normalizeModelId）
+  const id = raw.toLowerCase().replace(/^codex\s+/, 'codex/').replace(/·.*$/, '');
   const list = table || [];
 
   const exact = list.find((x) => String(x.id).toLowerCase() === id);

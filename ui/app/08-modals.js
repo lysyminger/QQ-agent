@@ -1440,6 +1440,7 @@ async function saveConfig({ quiet = false } = {}) {
       ...(c.sticker || {}),
       enabled: chk('#cfg-sticker', !!c.sticker?.enabled),
       encourage: Math.min(3, Math.max(0, Number(val('#cfg-sticker-encourage', c.sticker?.encourage ?? 1)) || 0)),
+      minGapMinutes: Math.min(1440, Math.max(0, Number(val('#cfg-sticker-mingap', c.sticker?.minGapMinutes ?? 0)) || 0)),
       promptMaxStickers: Math.min(50, Math.max(1, Number(val('#cfg-sticker-promptmax', c.sticker?.promptMaxStickers ?? 10)) || 10))
     };
     // 指令禁言（独立折叠卡「指令禁言」，与其他聊天设置一样即时自动保存）

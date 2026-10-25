@@ -410,6 +410,38 @@ export function forwardIdFromData(d) {
 }
 
 /**
+ * 取合并转发的节点数组：先按 message_id，取不到再按转发段里的 id（res_id）。
+ * 实测（2026-10-25，SnowLuma）：同一条转发，message_id 报 "payload is empty"，
+ * 段里的 id 却能取到 —— 两种都可能失败，只认一种会漏掉一大半。
+ * resIds 没给就用 get_msg 现查原消息的转发段。
+ */
+export async function fetchForwardNodes(onebot, messageId, resIds = null) {
+  const nodesOf = (r) => (Array.isArray(r?.messages) ? r.messages : Array.isArray(r?.data?.messages) ? r.data.messages : []);
+  let lastError = null;
+  if (messageId != null) {
+    try {
+      const nodes = nodesOf(await onebot.call('get_forward_msg', { message_id: Number(messageId) }));
+      if (nodes.length) return nodes;
+    } catch (e) { lastError = e; }
+  }
+  let ids = Array.isArray(resIds) ? resIds.filter(Boolean) : null;
+  if (!ids && messageId != null) {
+    try {
+      const m = await onebot.call('get_msg', { message_id: Number(messageId) });
+      const segs = Array.isArray(m?.message) ? m.message : Array.isArray(m?.data?.message) ? m.data.message : [];
+      ids = segs.filter((s) => s?.type === 'forward').map((s) => forwardIdFromData(s.data)).filter(Boolean);
+    } catch (e) { lastError ??= e; }
+  }
+  const nodes = [];
+  for (const id of ids || []) {
+    try { nodes.push(...nodesOf(await onebot.call('get_forward_msg', { id }))); } catch (e) { lastError = e; }
+  }
+  if (nodes.length) return nodes;
+  if (lastError) throw lastError;
+  return [];
+}
+
+/**
  * 把 OneBot 消息段数组转成 AI 可读的纯文本。
  * resolveReply: async (mid) => { sender, text } | null —— 解析引用原文。
  * resolveAtName: async (qq) => string | null —— 把 @ 的 QQ 号解析成群名片。
@@ -444,7 +476,14 @@ export async function segmentsToText(segments, { resolveReply = null, resolveAtN
         break;
       }
       case 'face': out.push(`[表情${d.id ?? ''}]`); break;
-      case 'image': out.push('[图片]'); break;
+      case 'image': {
+        // 表情包（summary 是 [动画表情] / [吃泡面] 这类标签）和照片分开写：模型看文字就知道是表情还是在发图。
+        // 照片的 summary 是 [图片] 或空，保持原样（一大批插件按 [图片] 认照片）。
+        const label = String(d.summary ?? '').trim();
+        const isSticker = !!label && !/^\[?图片\]?$/.test(label);
+        out.push(isSticker ? `[表情包${label === '[动画表情]' ? '' : `:${label.replace(/^\[|\]$/g, '')}`}]` : '[图片]');
+        break;
+      }
       case 'record': {
         // 语音转文字走 `media.transcribe` 能力（speech-to-text 插件提供）。
         // 只在主消息路径转写（onebot 由调用方传入）：转发链里逐条跑 whisper
@@ -469,7 +508,9 @@ export async function segmentsToText(segments, { resolveReply = null, resolveAtN
               const parts = [];
               if (senderLabel) parts.push(senderLabel);
               if (info.text) parts.push(info.text);
-              replyText = `[引用 ${parts.join('：')}]`;
+              // 末尾带被引用消息的 #id：模型能直接拿它 get_message_images / get_message_detail，
+              // 不用翻聊天记录去猜引用的是哪条（放末尾，不破坏"名字(QQ:x)：原文"的解析）
+              replyText = `[引用 ${parts.join('：')}${info.mid ? ` #${info.mid}` : ''}]`;
             }
           } catch { /* 解析失败降级 */ }
         }
@@ -507,18 +548,22 @@ export function extractMediaFromSegments(segments) {
   return media;
 }
 
+const FORWARD_PLACEHOLDER_UIDS = new Set(['1094950020']);
+
 /**
  * 展开合并转发节点为可读文本（纯函数，便于测试）。
  *
  * 背景：OneBot 事件里的 forward 段只有一个 res_id 占位符，
  * 需要 get_forward_msg 拿回节点数组（本函数处理的就是这个数组）。
- * 实测 NapCat：{ message_id } 可用；res_id 会过期（payload is empty），别依赖。
+ * 取节点用 fetchForwardNodes（message_id 和 res_id 两种都试）。
  *
  * 规则：
  *   - 每个节点一行「昵称: 内容」，内容复用 segmentsToText（@/图片/表情等占位一致）
  *   - 嵌套转发不再展开（深度 1 封顶，套娃截断）
  *   - 封顶：maxNodes 条 / maxChars 字符，超出注明"还有 N 条未展开"
- *   - 节点里的图片段同时提取到 media（url 新鲜，可用于取图/金句）
+ *   - 节点里的照片按出现顺序写成 [图片1] [图片2]…，同时按同样顺序进 media：
+ *     get_message_images 的 index=N 就是第 N 张（url 新鲜，可用于取图/金句）。
+ *     转发里的表情包只当语气，写 [表情包]、不进 media，免得打乱编号
  *
  * @param {Array} nodes get_forward_msg 返回的 messages 数组
  * @returns {{ text: string, media: Array } | null} 无可用节点返回 null
@@ -528,13 +573,26 @@ export async function expandForwardNodes(nodes, { maxNodes = 30, maxChars = 3000
   const lines = [];
   const media = [];
   let truncated = 0;
+  // SnowLuma 给转发里的人填同一个占位 QQ（实测 1094950020，各个转发里昵称各不相同）：
+  // 这种号带出去会让模型把不同的人当成同一个。占位号不写；名字不止一个却共用一个号的也不写
+  const uidOf = (n) => {
+    const uid = String(n?.sender?.user_id ?? n?.user_id ?? '').trim();
+    return FORWARD_PLACEHOLDER_UIDS.has(uid) ? '' : uid;
+  };
+  const nameOf = (n) => String(n?.sender?.card || n?.sender?.nickname || n?.user_id || '?');
+  const namesByUid = new Map();
+  for (const n of nodes) {
+    const uid = uidOf(n);
+    if (uid) namesByUid.set(uid, (namesByUid.get(uid) || new Set()).add(nameOf(n)));
+  }
 
   for (let i = 0; i < nodes.length; i++) {
     if (lines.length >= maxNodes) { truncated = nodes.length - i; break; }
     const n = nodes[i] || {};
     // 发言人带 QQ 号（与主历史同口径）：转发记录里的人也要能被稳定识别
-    const rawName = String(n.sender?.card || n.sender?.nickname || n.user_id || '?');
-    const nid = String(n.sender?.user_id ?? n.user_id ?? '').trim();
+    const rawName = nameOf(n);
+    const uid = uidOf(n);
+    const nid = namesByUid.get(uid)?.size > 1 ? '' : uid;
     const name = nid && nid !== rawName ? `${rawName}(QQ:${nid})` : rawName;
     const nm = n.message ?? n.content;
     let body = '';
@@ -543,9 +601,24 @@ export async function expandForwardNodes(nodes, { maxNodes = 30, maxChars = 3000
       body = nm.replace(/\[CQ:[^\]]*\]/g, '').trim();
     } else if (Array.isArray(nm)) {
       // 嵌套 forward 段清空 data → segmentsToText 输出 [转发消息] 占位（深度 1 封顶）
-      const segs = nm.map((s) => (s?.type === 'forward' ? { type: 'forward', data: {} } : s));
+      const segs = [];
+      for (const s of nm) {
+        if (s?.type === 'forward') { segs.push({ type: 'forward', data: {} }); continue; }
+        if (s?.type === 'image') {
+          const label = String(s.data?.summary ?? '').trim();
+          const [m] = extractMediaFromSegments([s]);
+          if ((!label || /^\[?图片\]?$/.test(label)) && (m.url || m.file)) {
+            media.push(m);
+            segs.push({ type: 'text', data: { text: `[图片${media.filter((x) => x.kind === 'image').length}]` } });
+            continue;
+          }
+          segs.push(s);   // 表情包 / 取不到地址的图：照常写占位，不进 media
+          continue;
+        }
+        segs.push(s);
+      }
       body = await segmentsToText(segs, {});
-      media.push(...extractMediaFromSegments(segs));
+      media.push(...extractMediaFromSegments(segs).filter((m) => m.kind !== 'image'));
     }
     body = body.replace(/\s+/g, ' ').trim().slice(0, 200);
     if (!body) continue;

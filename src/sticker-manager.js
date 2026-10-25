@@ -55,7 +55,19 @@ export class StickerManager {
     this.syncedAt = 0;
     this.syncing = null;
     this.collectTimes = [];
+    this.lastSentByChat = new Map();   // chatKey → 上次发表情包的时间（sticker.minGapMinutes 硬闸用）
     this.healLocalPaths();
+  }
+
+  /** 这个聊天离下一次能发表情包还差多少毫秒（0 = 现在就能发）。 */
+  gapLeft(chatKey, now = Date.now()) {
+    const gap = Math.max(0, Number(getConfig().sticker?.minGapMinutes) || 0) * 60000;
+    const last = this.lastSentByChat.get(String(chatKey)) || 0;
+    return gap && last ? Math.max(0, last + gap - now) : 0;
+  }
+
+  noteSent(chatKey, now = Date.now()) {
+    this.lastSentByChat.set(String(chatKey), now);
   }
 
   /**

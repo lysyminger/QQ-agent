@@ -958,6 +958,9 @@ td b, .tbl td b { color: var(--tx); font-weight: 600; }
 }
 .settings-runstate .rs-title { font-weight: 650; font-size: 13px; }
 .settings-runstate .rs-row { display: flex; align-items: center; gap: 8px; }
+/* 模型路由状态可能有好几行（Codex 接管 / 日常 / 难题），竖着排，不要被 flex 挤成并排的窄列 */
+.settings-runstate .rs-row.rs-model { display: block; line-height: 1.5; word-break: break-all; }
+.settings-runstate .rs-row.rs-model > div + div { margin-top: 4px; }
 .sg-l {
   font-size: 10.5px; font-weight: 700; letter-spacing: .07em;
   text-transform: uppercase; color: var(--tx3); padding: 12px 11px 5px;

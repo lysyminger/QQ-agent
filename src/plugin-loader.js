@@ -555,9 +555,33 @@ export function watchPlugins({ log = console.log, onReload, roots: rootsOpt = nu
       if (pendingAgain) { pendingAgain = false; scheduleReload('(补一轮)'); }
     }
   };
+  // 只在文件真的变了才重载：Windows 上杀毒 / 索引服务扫描插件目录也会冒 fs.watch 事件
+  // （实测约每小时一次、文件 mtime 没变），白白整体重载会把正在跑的插件进程（如 Codex 大脑）拦腰打断。
+  // 指纹 = 所有文件的 相对路径 + mtime + 大小（跳过 node_modules / .git）。
+  const fingerprint = () => {
+    const parts = [];
+    const walk = (dir) => {
+      let ents = [];
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        if (e.name === 'node_modules' || e.name === '.git') continue;
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else { try { const st = fs.statSync(p); parts.push(`${p}|${st.mtimeMs}|${st.size}`); } catch { /* 刚被删 */ } }
+      }
+    };
+    for (const r of roots) walk(r);
+    return parts.sort().join('\n');
+  };
+  let lastPrint = fingerprint();
   const scheduleReload = (filename) => {
     if (reloadTimer) clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(() => { runReload(filename).catch(() => {}); }, 500);
+    reloadTimer = setTimeout(() => {
+      const now = fingerprint();
+      if (now === lastPrint && filename !== '(补一轮)') return;
+      lastPrint = now;
+      runReload(filename).catch(() => {});
+    }, 500);
   };
 
   for (const root of roots) {

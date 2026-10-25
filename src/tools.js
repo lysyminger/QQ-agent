@@ -6,13 +6,14 @@
 //
 // 重构说明：所有工具通过 registerTool() 注册到 tool-registry.js，
 // 支持在设置页按卡片勾选启用/禁用。
+import fs from 'node:fs';
 import { getConfig } from './config.js';
 import { normalizeMessageList, unquoteJsonString } from './util.js';
-import { formatStickerList } from './stickers.js';
+import { formatStickerList, isHiddenSticker } from './stickers.js';
 import { skillManager } from './skills/manager.js';
 import { validateImageUrl, safeFetchBinary, browseLockState, checkBrowseLock } from './safe-fetch.js';
 import { webSearch, webFetch } from './web-search.js';
-import { expandForwardNodes } from './onebot.js';
+import { expandForwardNodes, fetchForwardNodes } from './onebot.js';
 import { registerTool, listTools } from './tool-registry.js';
 import { holidayOn, upcomingHoliday } from './holidays.js';
 import { compressImage } from './image-compress.js';
@@ -25,9 +26,27 @@ function currentGifRoute() {
   return resolveGifRoute({ vision: cfg.api?.vision !== false, video: cfg.api?.video === true });
 }
 
+// get_message_images 不带 index 时一次最多看几张（合并转发里可能有几十张图）
+const MAX_VIEW_IMAGES = 6;
+
 async function downloadImageAsDataUrl(url, timeoutMs = 30000) {
   const safeUrl = await validateImageUrl(url);
   const { buffer, contentType } = await safeFetchBinary(safeUrl);
+  return imageBufferToDataUrl(buffer, contentType);
+}
+
+/**
+ * 读机器人**自己发过**的本地图（生成图 / 下载图落盘后按路径发出）。
+ * 只给 self 留档条目用：路径来自 sender.sendImage 的留档，不是群友能填的参数。
+ */
+async function localImageAsDataUrl(file) {
+  const p = String(file || '').replace(/^file:\/\/\/?/i, '');
+  if (!/\.(png|jpe?g|webp|gif)$/i.test(p)) throw new Error('不是图片文件');
+  const buffer = await fs.promises.readFile(p);
+  return imageBufferToDataUrl(buffer, '');
+}
+
+async function imageBufferToDataUrl(buffer, contentType) {
   if (!buffer || !buffer.length) throw new Error('图片内容为空');
   // GIF 在这里分岔（规则矩阵见 resolveGifRoute）：
   //   vision+video 都开 → 转 mp4 按 video 部件发（llm.js 自动切视频专用模型）；
@@ -270,8 +289,12 @@ function registerAllTools() {
     },
     async execute(ctx, args) {
       try {
+        // 硬间隔（sticker.minGapMinutes）：提示词里的"偶尔用"压不住时，靠这里兜底
+        const wait = ctx.stickers.gapLeft?.(ctx.chatKey) || 0;
+        if (wait) return err(`这里刚发过表情包，${Math.ceil(wait / 60000)} 分钟内别再发了；想表达的用文字说，或者干脆不说`);
         let sticker = await ctx.stickers.find(unquoteJsonString(args.stickerId));
         if (!sticker) return err(`找不到表情 ${args.stickerId}，请先用 list_stickers 获取有效 id`);
+        if (isHiddenSticker(sticker)) return err(`表情 ${sticker.id} 备注了【别发】，换一个或者不发`);
         if (!sticker.url) return err(`表情 ${sticker.id} 没有可发送的图片地址`);
         // 发送前预检：http 直链（QQ 图床 rkey ~1 小时过期）尽量升级成本地转存，
         // 失败则交给 sender 的三级回退链。本地转存过的条目直通。
@@ -301,6 +324,7 @@ function registerAllTools() {
           atUserId: args.atUserId ?? null
         });
         ctx.stickers.markUsed(sticker.id, String(ctx.session.triggerText || '').slice(0, 100));
+        ctx.stickers.noteSent?.(ctx.chatKey);
         ctx.session.sent.push({ type: 'sticker', text: `[表情包:${sticker.desc || sticker.localNote || sticker.id}]`, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
         ctx.emit('session-update', ctx.session.id);
         return ok({ sent: true, messageId: result?.message_id ?? null, note: '表情已发送。' });
@@ -517,8 +541,7 @@ function registerAllTools() {
         if (String(entry.text || '').startsWith('[合并转发 共')) {
           return ok({ messageId: entry.mid, text: entry.text, note: '该转发已展开（读的是存档）' });
         }
-        const r = await ctx.onebot.call('get_forward_msg', { message_id: Number(entry.mid) });
-        const nodes = Array.isArray(r?.messages) ? r.messages : [];
+        const nodes = await fetchForwardNodes(ctx.onebot, entry.mid);
         const ex = await expandForwardNodes(nodes);
         if (!ex || !ex.text) return err('转发内容为空或已被 QQ 服务端丢弃（发送时间太久）');
         // 写回存档：一次展开，永久升级这条记录（模型/存档页/金句墙都受益）
@@ -608,28 +631,55 @@ function registerAllTools() {
   registerTool({
     id: 'get_message_images',
     name: '查看消息图片',
-    description: '查看某条消息里的图片/表情（视觉模型可以直接看懂）。消息文本出现 [图片] 时可用。id 用聊天记录里每条消息前的 #数字。',
+    description: '查看某条消息里的图片/表情（视觉模型可以直接看懂）。消息文本出现 [图片] 时可用。id 用聊天记录里每条消息前的 #数字。合并转发里的图片写作 [图片1] [图片2]…，传 index 只看那一张；不传 index 一次最多看前 6 张。',
     category: 'query',
     icon: '🖼️',
     requiresVision: true,
     parameters: {
       type: 'object',
-      properties: { messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' } },
+      properties: {
+        messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' },
+        index: { type: ['integer', 'string'], description: '可选：只看第几张（从 1 开始，对应合并转发里的 [图片N]）' }
+      },
       required: ['messageId']
     },
     async execute(ctx, args) {
       try {
         const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
         if (!entry) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
-        const urls = (entry.media || []).filter((m) => m.kind === 'image' && m.url).map((m) => m.url);
-        if (!urls.length) return ok(`消息 ${args.messageId} 没有可查看的图片`);
-        const results = [];
-        const failed = [];
-        for (const url of urls) {
-          try { results.push(await downloadImageAsDataUrl(url)); } catch (e) { failed.push(String(e?.message ?? e)); }
+        // 自己发的图优先读本地落盘文件（QQ 回传的链接会过期，本地文件不会）
+        const usable = (m) => m.kind === 'image' && (m.url || (entry.self && m.file));
+        let all = (entry.media || []).filter(usable);
+        if (!all.length) return ok(`消息 ${args.messageId} 没有可查看的图片`);
+        const index = args.index == null || String(args.index).trim() === '' ? 0 : Math.floor(Number(args.index));
+        if (index && !(index >= 1 && index <= all.length)) return err(`消息 ${args.messageId} 只有 ${all.length} 张图片，index 要在 1~${all.length} 之间`);
+        const pick = () => (index ? [all[index - 1]] : all.slice(0, MAX_VIEW_IMAGES));
+        const fetchAll = async (imgs) => {
+          const results = [];
+          const failed = [];
+          for (const m of imgs) {
+            try {
+              results.push(entry.self && m.file && !/^https?:/i.test(m.file) ? await localImageAsDataUrl(m.file) : await downloadImageAsDataUrl(m.url));
+            } catch (e) { failed.push(String(e?.message ?? e)); }
+          }
+          return { results, failed };
+        };
+        let { results, failed } = await fetchAll(pick());
+        // 合并转发里的图片链接放久了会过期：重新取一次转发，拿新链接换掉存档里的旧链接再试
+        if (failed.length && String(entry.text || '').startsWith('[合并转发 共') && ctx.onebot) {
+          try {
+            const ex = await expandForwardNodes(await fetchForwardNodes(ctx.onebot, entry.mid));
+            const fresh = (ex?.media || []).filter((m) => m.kind === 'image');
+            if (fresh.length) {
+              ctx.store.updateByMid(ctx.chatKey, entry.mid, { replaceMedia: ex.media });
+              all = fresh;
+              if (!index || index <= all.length) ({ results, failed } = await fetchAll(pick()));
+            }
+          } catch { /* 转发本身也取不到了：按原来的失败结果返回 */ }
         }
         if (!results.length) return err(`图片获取失败：${failed.join('；')}`);
-        const note = failed.length ? `（另有 ${failed.length} 张获取失败）` : '';
+        const more = !index && all.length > MAX_VIEW_IMAGES ? `（共 ${all.length} 张，这里是前 ${MAX_VIEW_IMAGES} 张；要看别的传 index）` : '';
+        const note = `${failed.length ? `（另有 ${failed.length} 张获取失败）` : ''}${more}${index ? `（第 ${index} 张）` : ''}`;
         // GIF 动图可能被转成了视频部件（见 downloadImageAsDataUrl），文案里区分张数
         const videoCount = results.filter((r) => r?.gifVideo).length;
         const imageCount = results.length - videoCount;
@@ -1103,8 +1153,13 @@ function registerAllTools() {
         }
         return ok({
           query,
-          results: list.slice(0, limit).map((r) => ({ title: String(r?.title ?? '').slice(0, 60), url: String(r?.url ?? '') })),
-          note: '挑一条用 send_image(url) 发出去；url 要整条照抄，不要改。都不贴切就换个更具体的词再搜一次（最多搜 3 次）。'
+          results: list.slice(0, limit).map((r) => ({
+            title: String(r?.title ?? '').slice(0, 60) || '（来源页没有标题）',
+            url: String(r?.url ?? ''),
+            ...(r?.page ? { page: String(r.page).slice(0, 120) } : {})
+          })),
+          note: 'title 是图片来源页的标题、page 是来源页：优先挑标题里提到你要找的东西的（同名的别的东西、蹭关键词的图标题多半对不上）。'
+            + '挑一条用 send_image(url) 发出去；url 要整条照抄，不要改。都不贴切就换个更具体的词再搜一次（最多搜 3 次）。'
         });
       } catch (error) {
         return err(error?.message ?? error);

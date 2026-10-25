@@ -16,6 +16,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import zlib from 'node:zlib';
 import { getConfig } from './config.js';
 
 const dnsLookup = dns.promises.lookup;
@@ -111,6 +112,8 @@ async function lookupWithTimeout(hostname) {
   return Promise.race([dnsLookup(hostname, { all: true, verbatim: true }), timeout]).finally(() => clearTimeout(timer));
 }
 
+const isFakeIp = (ip) => net.isIP(ip) === 4 && /^198\.(1[89])\./.test(ip);
+
 async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
   const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (!h) throw new Error('主机名为空');
@@ -130,6 +133,9 @@ async function resolveSafeHost(hostname, { allowPrivate = false } = {}) {
   if (!addresses.length) throw new Error('域名没有解析结果');
   if (!allowPrivate) {
     for (const { address } of addresses) {
+      // 198.18.0.0/15 是测试保留段，Clash 等代理的 fake-ip 模式会把所有外网域名解析到这里再转发；
+      // 只对"域名解析出来"的放行（直接写这个 IP 仍按内网拦），否则开着代理时 QQ 图片 / B站图片全都下不了
+      if (isFakeIp(address)) continue;
       if (isPrivateIp(address)) throw new Error('域名解析到内网/本机地址，已阻止');
     }
   }
@@ -255,7 +261,7 @@ function readBounded(res, maxBytes, asText) {
 }
 
 // 使用已校验的 IP 发起请求（保留 Host/SNI），从根上消除 DNS rebinding。
-function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  return new Promise((resolve, reject) => {
+function requestOnce(url, ip, { asBinary = false, maxBytes = 50000, headers: extraHeaders = {}, timeoutMs = 20000 } = {}) {  return new Promise((resolve, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
     const port = url.port || (url.protocol === 'https:' ? 443 : 80);
     const req = mod.request({
@@ -267,11 +273,13 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
         host: url.host,
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) qq-agent/1.0',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,image/avif,image/webp,image/*;q=0.8',
-        'accept-language': 'zh-CN,zh;q=0.9'
+        'accept-language': 'zh-CN,zh;q=0.9',
+        // 调用方附加的头（Referer / UA / Cookie 等）；host 由 URL 决定，不许覆盖
+        ...Object.fromEntries(Object.entries(extraHeaders).filter(([k]) => k.toLowerCase() !== 'host'))
       },
       servername: url.protocol === 'https:' ? url.hostname : undefined,
       rejectUnauthorized: url.protocol === 'https:',
-      timeout: 20000
+      timeout: timeoutMs
     }, (res) => {
       const statusCode = res.statusCode || 0;
       if ([301, 302, 303, 307, 308].includes(statusCode)) {
@@ -279,7 +287,19 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
         resolve({ statusCode, redirect: String(res.headers.location || '') });
         return;
       }
-      readBounded(res, maxBytes, !asBinary)
+      // 有的站（B站等）不管请求头怎么写都回 gzip/br，不解压的话正文是一堆二进制乱码
+      const encoding = String(res.headers['content-encoding'] || '').toLowerCase().trim();
+      const unzip = encoding === 'gzip' || encoding === 'x-gzip' ? zlib.createGunzip()
+        : encoding === 'deflate' ? zlib.createInflate()
+          : encoding === 'br' ? zlib.createBrotliDecompress()
+            : null;
+      let stream = res;
+      if (unzip) {
+        stream = res.pipe(unzip);
+        // 读满上限时 readBounded 只会 destroy 它拿到的流，这里把源连接一起断掉
+        unzip.on('close', () => { try { res.destroy(); } catch { /* ignore */ } });
+      }
+      readBounded(stream, maxBytes, !asBinary)
         .then((body) => resolve({ statusCode, body, contentType: String(res.headers['content-type'] || '') }))
         .catch(reject);
     });
@@ -292,16 +312,27 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000 } = {}) {  re
 const MAX_REDIRECTS = 5;
 
 /** 抓取网页文本（≤50000 字符），SSRF 全防护（不做内网例外）。 */
-export async function safeFetch(urlString, { browseLocked = false } = {}) {
+// maxBytes / headers / timeoutMs 可选：不传时行为与原来一致（≤50000 字符、默认头、20 秒）。
+// 插件（如 media-download 抓 B站 API）一直在传这几个参数，但此前被静默忽略 ——
+// 超过 5 万字符的 JSON（合集视频信息、DASH 清单）被截断，表现为"返回的数据不完整"。
+export async function safeFetch(urlString, { browseLocked = false, maxBytes = 0, headers = {}, timeoutMs = 20000 } = {}) {
   // 锁定校验放在**最前面**，连 DNS 都不做 —— 不在白名单就根本不该发起连接
   const lock = browseLocked ? checkBrowseLock(urlString) : { enabled: false, allowed: true, host: '' };
   if (!lock.allowed) throw new Error(`浏览锁定：${lock.host || '该地址'} 不在允许的域名清单内`);
+  const customLimit = Number(maxBytes) > 0 ? Math.floor(Number(maxBytes)) : 0;
+  const limit = customLimit || 50000;
   let { url, ip } = await validateFetchUrl(urlString);
+  const originHost = url.hostname;
+  let extra = { ...headers };
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: 50000 });
+    const result = await requestOnce(url, ip, { asBinary: false, maxBytes: limit, headers: extra, timeoutMs });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
+      // 跨域重定向：凭证类头不跟着走（防 Cookie / Token 泄露给第三方域）
+      if (new URL(next).hostname !== originHost) {
+        extra = Object.fromEntries(Object.entries(extra).filter(([k]) => !/^(cookie|authorization)$/i.test(k)));
+      }
       // ⚠️ 逐跳校验：重定向目标也要在白名单里。
       // 只在入口校验的话，一个站内链接 302 到站外就绕过了锁定。
       if (browseLocked) {
@@ -312,22 +343,29 @@ export async function safeFetch(urlString, { browseLocked = false } = {}) {
       continue;
     }
     const body = result.body || '';
-    return { url: url.toString(), statusCode: result.statusCode, truncated: body.length >= 50000, body };
+    const truncated = customLimit ? Buffer.byteLength(body) >= customLimit : body.length >= 50000;
+    return { url: url.toString(), statusCode: result.statusCode, truncated, body };
   }
   throw new Error('重定向次数过多，已停止');
 }
 
 /** 下载二进制（图片，≤maxBytes 字节），返回 { buffer, contentType }。 */
-export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, { browseLocked = false } = {}) {
+// headers / timeoutMs 可选（抖音等 CDN 防盗链要 Referer；此前被静默忽略）
+export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, { browseLocked = false, headers = {}, timeoutMs = 20000 } = {}) {
   const lock = browseLocked ? checkBrowseLock(urlString) : { enabled: false, allowed: true, host: '' };
   if (!lock.allowed) throw new Error(`浏览锁定：${lock.host || '该地址'} 不在允许的域名清单内`);
   const allowPrivate = getConfig().security?.allowPrivateImageHosts === true;
   let { url, ip } = await validateFetchUrl(urlString, { allowPrivate });
+  const originHost = url.hostname;
+  let extra = { ...headers };
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const result = await requestOnce(url, ip, { asBinary: true, maxBytes });
+    const result = await requestOnce(url, ip, { asBinary: true, maxBytes, headers: extra, timeoutMs });
     if ([301, 302, 303, 307, 308].includes(result.statusCode)) {
       if (!result.redirect) throw new Error(`重定向缺少 Location: ${result.statusCode}`);
       const next = new URL(result.redirect, url).toString();
+      if (new URL(next).hostname !== originHost) {
+        extra = Object.fromEntries(Object.entries(extra).filter(([k]) => !/^(cookie|authorization)$/i.test(k)));
+      }
       // 逐跳校验（同 safeFetch）：重定向目标也必须在白名单内
       if (browseLocked) {
         const nl = checkBrowseLock(next);
@@ -354,7 +392,7 @@ export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, { 
 // 必是残缺数据），删掉半截文件并抛错，绝不把截断文件留给调用方。
 
 /** 把一次响应流式写入 dest（200 时）；重定向只取 Location，响应体直接排空丢弃。 */
-function requestToFile(url, ip, dest, { limit = Infinity, timeoutMs = 30000 } = {}) {
+function requestToFile(url, ip, dest, { limit = Infinity, timeoutMs = 30000, headers: extraHeaders = {} } = {}) {
   return new Promise((resolve, reject) => {
     const mod = url.protocol === 'https:' ? https : http;
     const port = url.port || (url.protocol === 'https:' ? 443 : 80);
@@ -367,7 +405,9 @@ function requestToFile(url, ip, dest, { limit = Infinity, timeoutMs = 30000 } = 
         host: url.host,
         'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) qq-agent/1.0',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,image/avif,image/webp,image/*;q=0.8',
-        'accept-language': 'zh-CN,zh;q=0.9'
+        'accept-language': 'zh-CN,zh;q=0.9',
+        // 调用方附加的头（如 B站 CDN 防盗链必需的 Referer）；host 由上面按 URL 决定，不许覆盖
+        ...Object.fromEntries(Object.entries(extraHeaders).filter(([k]) => k.toLowerCase() !== 'host'))
       },
       servername: url.protocol === 'https:' ? url.hostname : undefined,
       rejectUnauthorized: url.protocol === 'https:',
@@ -436,7 +476,7 @@ function requestToFile(url, ip, dest, { limit = Infinity, timeoutMs = 30000 } = 
  * @param {object} [opts]     { timeoutMs = 30000 }（socket 空闲超时）、
  *                            { browseLocked = false }（浏览锁定逐跳校验）
  */
-export async function safeFetchBinaryToFile(urlString, destPath, maxBytes, { timeoutMs = 30000, browseLocked = false } = {}) {
+export async function safeFetchBinaryToFile(urlString, destPath, maxBytes, { timeoutMs = 30000, browseLocked = false, headers = {} } = {}) {
   const dest = String(destPath || '');
   if (!dest) throw new Error('缺少目标文件路径');
   const limit = Math.max(1, Number(maxBytes) || 1);
@@ -449,11 +489,17 @@ export async function safeFetchBinaryToFile(urlString, destPath, maxBytes, { tim
   let ok = false;
   try {
     let { url, ip } = await validateFetchUrl(urlString, { allowPrivate });
+    const originHost = url.hostname;
+    let extra = { ...headers };
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const r = await requestToFile(url, ip, dest, { limit, timeoutMs });
+      const r = await requestToFile(url, ip, dest, { limit, timeoutMs, headers: extra });
       if (r.redirect !== undefined) {
         if (!r.redirect) throw new Error(`重定向缺少 Location: ${r.statusCode}`);
         const next = new URL(r.redirect, url).toString();
+        // 跨域重定向：凭证类头不跟着走（防 Cookie / Token 泄露给第三方域）
+        if (new URL(next).hostname !== originHost) {
+          extra = Object.fromEntries(Object.entries(extra).filter(([k]) => !/^(cookie|authorization)$/i.test(k)));
+        }
         // 逐跳校验（同 safeFetch/safeFetchBinary）：重定向目标也必须在白名单内
         if (browseLocked) {
           const nl = checkBrowseLock(next);

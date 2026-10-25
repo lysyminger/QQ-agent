@@ -53,7 +53,7 @@ function renderSettingsSidebar() {
     <div class="settings-runstate">
       <div class="rs-title">机器人运行状态</div>
       <div class="rs-row"><span class="dot ${s?.onebot?.connected ? 'dot-on' : 'dot-off'}"></span><span>${s?.onebot?.connected ? '运行中' : '未就绪'}</span></div>
-      <div class="rs-row muted">${state.paused ? '⏸ 已暂停' : (s?.orchestrator?.model ? `模型：${esc(s.orchestrator.model)}` : '模型：未设置')}</div>
+      <div class="rs-row muted rs-model" title="${esc(routeSummary(s).tip)}">${state.paused ? '⏸ 已暂停' : routeSummaryHtml(routeSummary(s))}</div>
     </div>
     <div class="settings-menu">
       ${menu.map(([id, label]) => `<button class="settings-menu-item ${state.settingsSection === id ? 'active' : ''}" data-section="${id}">${label}${id === 'desktop' && (typeof updateAvailable !== 'undefined' && updateAvailable) ? '<span class="update-dot" title="发现新版本"></span>' : ''}</button>`).join('')}
@@ -942,7 +942,7 @@ return `
       id: 'card-sticker',
       icon: '😄',
       title: '表情包',
-      sub: '收藏表情同步 / 发送积极度 / 提示词列举数',
+      sub: '收藏表情同步 / 发送积极度 / 最小间隔 / 提示词列举数',
       body: `
       <div class="checkbox-row"><input type="checkbox" id="cfg-sticker" ${c.sticker.enabled ? 'checked' : ''} />
         <label for="cfg-sticker">启用表情包（收藏表情同步 + 发送工具）</label></div>
@@ -955,6 +955,13 @@ return `
         </select>
         <div class="hint">
           这是"引导"不是"强制"，模型仍会自行判断什么时机合适。
+        </div>
+      </div>
+      <div class="field">
+        <label>同一个聊天两次表情包至少间隔（分钟，0 = 不限）</label>
+        <input type="number" id="cfg-sticker-mingap" min="0" max="1440" value="${esc(Math.max(0, Number(c.sticker?.minGapMinutes) || 0))}" />
+        <div class="hint">
+          硬性限制：间隔内模型想发表情包会被拦下，改用文字回。嫌表情包刷屏就调大。
         </div>
       </div>
       <div class="field">

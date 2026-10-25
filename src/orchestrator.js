@@ -1206,15 +1206,19 @@ export class Orchestrator {
             const reason = String(session.finishReason ?? '');
             const st = this.#activeState(chatKey);
             if (enabled && topic && eligibleTier) {
-              const ttlMs = Math.max(60000, Number(cfgA.chatActive?.ttlMinutes) || 30) * 60000;
+              // ttlMinutes 是分钟：先钳到 ≥1 分钟再换算毫秒。
+              // 原写法 Math.max(60000, 分钟) * 60000 把下限当成了毫秒，任何设置都变成 1000 小时，
+              // 一进活跃期就几乎出不来，表现为"调了档位还是每句都回"。
+              const ttlMs = Math.max(1, Number(cfgA.chatActive?.ttlMinutes) || 30) * 60000;
               this.activeTopics.set(chatKey, { topic: topic.slice(0, 60), until: Date.now() + ttlMs });
               console.log(`[orchestrator] ${chatKey} 进入活跃期（话题：${topic.slice(0, 60)}，${Math.round(ttlMs / 60000)} 分钟）`);
             } else if (st && /话题(结束|终止|偏离)/.test(reason)) {
               this.activeTopics.delete(chatKey);
               console.log(`[orchestrator] ${chatKey} 活跃期结束（模型判断话题结束）`);
             } else if (st && !topic) {
+              // 同上：分钟钳到 ≥1 再换算毫秒
               // 活跃期内的普通 finish：话题仍在，刷新到期
-              const ttlMs = Math.max(60000, Number(cfgA.chatActive?.ttlMinutes) || 30) * 60000;
+              const ttlMs = Math.max(1, Number(cfgA.chatActive?.ttlMinutes) || 30) * 60000;
               this.activeTopics.set(chatKey, { ...st, until: Date.now() + ttlMs });
             }
           }

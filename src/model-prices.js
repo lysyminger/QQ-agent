@@ -214,6 +214,15 @@ export const OFFICIAL_PRICES = {
   'ernie-5.0': { in: 8.64, out: 25.92, cached: null, note: '旗舰档', src: 'derived' },
   'ernie-4.5': { in: 2.88, out: 8.64, cached: null, note: '旧代', src: 'derived' },
 
+  // ══ OpenAI GPT-6 系列 ══
+  // 来源：https://developers.openai.com/api/docs/pricing（2026-10-20 核对；降价后的永久价，美元按 7.2 换算）
+  // gpt-6-luna 美元原价：$0.10 输入 / $0.01 缓存命中 / $0.125 缓存写入 / $0.50 输出；
+  //   长上下文(>272K) $0.20 / $0.02 / $0.25 / $0.75；Batch / Flex 半价，Fast 翻倍。
+  // Codex 大脑上报的模型名是 codex/gpt-6-luna（去前缀后命中这里）；走 ChatGPT 订阅时不按 token 扣钱，这里是按 API 价的参考成本。
+  // gpt-6.1-sol 美元原价：$2.00 / $0.10 缓存命中 / $10.00 输出；长上下文 $4.00 / $0.20 / $15.00
+  'gpt-6.1-sol': { in: 14.4, out: 72, cached: 0.72, image: { mode: 'unknown', note: '支持图片输入，官方没单列图片价' }, note: '标准档短上下文；长上下文(>272K) 28.8/108（缓存 1.44）；Batch/Flex 半价、Fast 翻倍', src: 'derived' },
+  'gpt-6-luna': { in: 0.72, out: 3.6, cached: 0.072, image: { mode: 'unknown', note: '支持图片输入，官方没单列图片价' }, note: '标准档短上下文；长上下文(>272K) 1.44/5.4（缓存 0.144）；缓存写入 0.9；Batch/Flex 半价、Fast 翻倍', src: 'derived' },
+
   // ══ OpenAI GPT-5.6 系列 ══
   // 促销价（至少持续到 2026-11-21）：短上下文 / 长上下文(>272K) 双档
   'gpt-5.6-sol': { in: 28.8, out: 144, cached: 2.88, image: { mode: 'unknown', note: '支持图片输入，换算规则待补' }, note: '促销价；长上下文 57.6/216', src: 'derived' },
@@ -298,8 +307,16 @@ export const OFFICIAL_PRICES = {
  * 匹配顺序：精确 → 去 provider 前缀再精确 → 前缀匹配。
  * 查不到返回 null（此时应由用户手动填单价）。
  */
+/**
+ * 旧版 codex-bridge 记的模型名是「Codex gpt-6-luna·xhigh」（带思考档位），
+ * 统一成 codex/gpt-6-luna 再查，历史会话也能算上成本。前端 ui/vendor/price-match.js 同步。
+ */
+function normalizeModelId(raw) {
+  return raw.replace(/^codex\s+/, 'codex/').replace(/·.*$/, '');
+}
+
 export function resolveOfficialPrice(modelId) {
-  const raw = String(modelId ?? '').trim().toLowerCase();
+  const raw = normalizeModelId(String(modelId ?? '').trim().toLowerCase());
   if (!raw) return null;
 
   const table = EFFECTIVE_PRICES;
@@ -613,7 +630,7 @@ export function resolveModelPrice(modelId, cfg, priceTable = null) {
 export function matchPriceTable(modelId, table) {
   const raw = String(modelId || '').trim();
   if (!raw) return null;
-  const id = raw.toLowerCase();
+  const id = normalizeModelId(raw.toLowerCase());
   const list = table || [];
 
   const exact = list.find((x) => String(x.id).toLowerCase() === id);

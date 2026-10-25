@@ -325,7 +325,9 @@ export class SendQueue {
       this.#markSent(chatKey, `__img__${dedupeKey}`);   // 发图同样：成功后才记账
       const ts = Date.now();
       const note = options.note ? `:${String(options.note).slice(0, 40)}` : '';
-      this.store.appendSelf(chatKey, { text: `[图片${note}]`, ts, mid: data?.message_id ?? null });
+      // 媒体一并留档：群友引用"你发的那张图"时，你还能用 get_message_images 再看一眼
+      const media = (url || file) ? [{ kind: 'image', url: url || '', file, summary: '[图片]' }] : [];
+      this.store.appendSelf(chatKey, { text: `[图片${note}]`, ts, mid: data?.message_id ?? null, media });
       this.onSent?.({ chatKey, text: `[图片${note}]`, messageId: data?.message_id ?? null, kind: 'image' });
       return { message_id: data?.message_id ?? null };
     });
