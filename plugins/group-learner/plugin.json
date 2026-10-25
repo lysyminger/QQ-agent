@@ -1,0 +1,120 @@
+{
+  "id": "group-learner",
+  "name": "群内学习·群文化记忆",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "让机器人在群里被动地「不断学习」：每次被触发回复时，顺带把近期群聊提炼成这个群的「群文化」（黑话/梗、常聊话题、群氛围、人物关系、称呼习惯、口头禅），攒得越久越像本群真人。这些知识按人设分槽存储——换人设秒切到另一份、零重新拉取、零 token 浪费，切回旧人设原样还在。每次回复只注入一小段（约百来字），不重读历史。全程后台整理，不阻塞回复；整理模型默认跟随聊天模型，可在「设置 → 记忆」配专用便宜模型省 token。",
+  "author": "为 QQ Agent 定制",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": true,
+  "capabilities": [
+    "group.culture.v1"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "onlyGroups": true,
+    "chatIds": "",
+    "protectKeys": "",
+    "minNewMessages": 12,
+    "digestIntervalMinutes": 180,
+    "windowMessages": 120,
+    "maxCultureItems": 6,
+    "injectCulture": true,
+    "manualAction": "",
+    "lastResult": "",
+    "verbose": false
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用群内学习",
+      "description": "总开关。关掉后不再自动攒群文化、也不再注入，行为与没装这个插件完全一致（已经攒下的知识会保留，随时能开回来）。"
+    },
+    "onlyGroups": {
+      "type": "boolean",
+      "label": "只在群里学习",
+      "description": "默认开启：只对群聊学习，私聊不参与（群文化本来就是群的事）。关掉后私聊也会学。"
+    },
+    "chatIds": {
+      "type": "string",
+      "label": "只在这些群学习（可选）",
+      "description": "填群号，多个用英文逗号、中文逗号、空格或换行分隔。留空 = 所有群都学。例：1071355009, 2135509089"
+    },
+    "protectKeys": {
+      "type": "string",
+      "label": "永不学习的会话（保护名单）",
+      "description": "填群号或 QQ 号，多个用逗号分隔。名单里的会话不攒群文化。留空 = 不保护。"
+    },
+    "minNewMessages": {
+      "type": "number",
+      "label": "攒够多少条新消息才整理一次",
+      "description": "机器人看到的新消息达到这个数、且距上次整理超过冷却时间，才触发一次后台整理。调小 = 学得更勤（更费 token），调大 = 更省。默认 12。",
+      "min": 3,
+      "max": 200,
+      "step": 1,
+      "default": 12
+    },
+    "digestIntervalMinutes": {
+      "type": "number",
+      "label": "整理冷却时间（分钟）",
+      "description": "两次整理之间至少隔这么久，防止群里刷屏时反复整理烧 token。默认 180（3 小时）。想快点见效可先调小（如 30）。",
+      "min": 30,
+      "max": 1440,
+      "step": 30,
+      "default": 180
+    },
+    "windowMessages": {
+      "type": "number",
+      "label": "每次整理看的消息条数",
+      "description": "每次整理最多取最近这么多条聊天喂给模型。默认 120。调大看得更全（更费 token），调小更省。",
+      "min": 20,
+      "max": 500,
+      "step": 20,
+      "default": 120
+    },
+    "maxCultureItems": {
+      "type": "number",
+      "label": "每类最多记几条",
+      "description": "黑话、话题、关系、口头禅每类最多保留几条，防止知识无限膨胀、注入变长。默认 6。",
+      "min": 3,
+      "max": 15,
+      "step": 1,
+      "default": 6
+    },
+    "injectCulture": {
+      "type": "boolean",
+      "label": "每次回复注入群文化",
+      "description": "默认开启：把当前人设攒下的群文化作为一小段注入提示词，让机器人「记得」这个群。关掉后只学习不注入（可先攒着）。"
+    },
+    "manualAction": {
+      "type": "string",
+      "label": "手动操作（填了保存即执行一次）",
+      "description": "格式：`群号` 或 `群号:动作`，多个用分号分隔。填 `群号`（如 1071355009）= 立即整理一次该群的群文化；`群号:view` = 查看该群当前人设的群文化；`群号:reset` = 删除该群所有群文化（不可恢复）。写 `all` 可对所有群执行。执行完本框会自动清空，结果写进下面「上次操作结果」。",
+      "multiline": true
+    },
+    "lastResult": {
+      "type": "string",
+      "label": "上次操作结果（只读）",
+      "description": "上一次手动操作的结果会自动写在这里。不用填，也别手改。",
+      "multiline": true
+    },
+    "verbose": {
+      "type": "boolean",
+      "label": "输出详细日志",
+      "description": "开启后每次登记/切换/整理都往控制台打一行，便于确认真的在工作（默认安静）。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "group-learner-note",
+        "title": "群文化记忆",
+        "priority": 41,
+        "content": "你在每个群会慢慢攒下一份「群文化记忆」（黑话/梗、常聊话题、氛围、人物关系、称呼习惯、口头禅），它会在提示词里以【群文化记忆】的形式给你。说话时自然地把这些用上（用群里的黑话、接熟悉的梗、按群友的称呼习惯叫人），让它越来越像你在这个群长期待出来的感觉。但别把这份记忆当成清单念出来，也别跟群友提「我在学习你们的群文化」这类内部机制。"
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "id": "qq-identity",
+  "name": "群友身份对照（QQ 号识别）",
+  "version": "1.0.0",
+  "description": "把「群里的名字」和「QQ 号」绑成一份持久对照表：改名字也能认出是同一个人。每次消息自动学习别名（曾用名一起记住），把对照表注入提示词让模型不再只认名字，并提供工具把记忆库里按名字存的存档合并到同一个 QQ 号下。",
+  "apiVersion": 1,
+  "category": "utility",
+  "capabilities": [
+    "message.identity"
+  ],
+  "hooks": [
+    "before-context"
+  ],
+  "permissions": [],
+  "settings": {
+    "enabled": true,
+    "injectLimit": 40,
+    "aliasKeep": 6,
+    "announceRename": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用身份对照",
+      "description": "关闭后不再学习也不注入对照表（已有存档保留）。"
+    },
+    "injectLimit": {
+      "type": "number",
+      "label": "提示词里最多列多少位成员",
+      "description": "按最近活跃排序取前 N 位。名单太长会挤占上下文，默认 40。",
+      "min": 5,
+      "max": 200
+    },
+    "aliasKeep": {
+      "type": "number",
+      "label": "每人最多记住几个曾用名",
+      "description": "群友频繁改名时，只保留最近的几个（默认 6），避免数据无限膨胀。",
+      "min": 1,
+      "max": 20
+    },
+    "announceRename": {
+      "type": "boolean",
+      "label": "改名字时写一条日志",
+      "description": "群里有人改名时在日志里记一行「QQ 号 从 A 改名为 B」，方便回溯。"
+    }
+  }
+}

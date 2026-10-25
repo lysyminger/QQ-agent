@@ -1,0 +1,72 @@
+{
+  "id": "typo-sim",
+  "name": "打字错误模拟（手滑 + 撤回重发）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "让机器人**偶尔手滑打错字**（默认 6%），打错之后**大概率撤回、重新发正确的**（默认 80%，剩下 20% 就像真人打错懒得改）。**零 token**：不叫模型、不占提示词，只在真正发送的那一下改文本。只对纯文本闲聊下手 —— 报时、榜单、股票代码、词云这类带数字/链接/结构化标记的消息一律不碰。一轮最多错 1 条、每小时封顶（防群友嫌烦、也防被风控）。撤回失败就留着错字并记日志，不补发。",
+  "author": "本机定制",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": true,
+  "capabilities": ["status.typo-sim"],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "typoChance": 6,
+    "recallChance": 80,
+    "maxPerHour": 6,
+    "minChars": 4,
+    "maxChars": 40,
+    "allowPrivate": true,
+    "skipChats": "",
+    "quiet": false
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用打字错误模拟",
+      "description": "关掉就完全不手滑（撤回也停了）。"
+    },
+    "typoChance": {
+      "type": "number",
+      "label": "打错字的概率（%）",
+      "description": "默认 6%。注意这是「每条普通闲聊」的概率：太低看不见效果，太高像个坏了的输入法。实际还受「每小时封顶」和「一轮最多一条」限制。"
+    },
+    "recallChance": {
+      "type": "number",
+      "label": "打错后撤回重发的概率（%）",
+      "description": "默认 80%。剩下 20% 就留着错字 —— 真人打错了也经常懒得改。"
+    },
+    "maxPerHour": {
+      "type": "number",
+      "label": "每小时最多手滑几次",
+      "description": "默认 6 次。既防群友嫌烦，也防撤回太频繁被 QQ 风控盯上。"
+    },
+    "minChars": {
+      "type": "number",
+      "label": "太短的不改（字数下限）",
+      "description": "默认 4 个字。像「中」「好」「？」这种短句打错反而假。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "太长的不改（字数上限）",
+      "description": "默认 40 个字。长文本基本是结构化内容（榜单、词云文案），打错会误导人。"
+    },
+    "allowPrivate": {
+      "type": "boolean",
+      "label": "私聊也手滑",
+      "description": "默认开。真人私聊同样会打错字。"
+    },
+    "skipChats": {
+      "type": "string",
+      "label": "不手滑的会话",
+      "description": "填 group:870817228 这种（多个用逗号分隔），比如工作群、正经群。"
+    },
+    "quiet": {
+      "type": "boolean",
+      "label": "安静模式（不写运行日志）",
+      "description": "默认关：每次手滑都往项目日志里写一行，方便你调概率。打开就不写。"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "id": "zjsru-failover",
+  "name": "模型路由：难题 DeepSeek 官方 / 日常学校免费 + 故障切换",
+  "version": "2.2.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "按难度选模型：日常闲聊走学校免费主模型，判定为难题（技术/计算/深入提问/长问题，且在叫机器人；或主人提问）的会话走 DeepSeek 官方（付费，按次计 token）。带图片的请求一律走免费路由。任一端点失败一次就在冷却期内改走备用：官方失败或余额不足 → 免费路由；免费主模型失败 → 先走 DeepSeek 官方（可关），超限或带图时退回另一个免费模型。",
+  "enabledByDefault": true,
+  "capabilities": [
+    "llm.endpoint-pick",
+    "llm.endpoint-feedback",
+    "status.zjsru-failover"
+  ],
+  "settings": {
+    "fallbackModel": "zjsru-DeepSeek-V4-flash-0731",
+    "cooldownMinutes": 10,
+    "routerEnabled": true,
+    "hardBaseUrl": "https://api.deepseek.com",
+    "hardModel": "deepseek-flash",
+    "hardApiKey": "",
+    "maxHardCallsPerHour": 40,
+    "ownerAlwaysHard": true,
+    "freeFailoverToHard": true
+  },
+  "configSchema": {
+    "fallbackModel": {
+      "type": "string",
+      "description": "免费主模型熔断期间改走的模型（同一学校网关，只能填 zjsru- 开头的免费路由）。",
+      "label": "免费主模型故障时改用的模型"
+    },
+    "cooldownMinutes": {
+      "type": "number",
+      "description": "端点失败后多久内不再尝试它。冷却结束后的第一次请求会重新试。",
+      "label": "熔断冷却（分钟）"
+    },
+    "routerEnabled": {
+      "type": "boolean",
+      "description": "关掉后所有请求都走学校免费路由。",
+      "label": "难题走 DeepSeek 官方"
+    },
+    "hardBaseUrl": {
+      "type": "string",
+      "description": "默认 DeepSeek 官方 https://api.deepseek.com",
+      "label": "难题端点地址"
+    },
+    "hardModel": {
+      "type": "string",
+      "description": "默认 deepseek-flash（V4.1-Flash，闲时 输入 1 元/百万 token、命中缓存 0.02、输出 4；工作日高峰翻倍）。",
+      "label": "难题模型"
+    },
+    "hardApiKey": {
+      "type": "string",
+      "description": "留空则不会把任何请求发去付费端点。",
+      "label": "DeepSeek 官方 API Key",
+      "secret": true
+    },
+    "maxHardCallsPerHour": {
+      "type": "number",
+      "description": "一次回复通常调用模型 2~3 次。超过上限的难题改走免费路由。默认 40。",
+      "label": "每小时最多几次付费调用"
+    },
+    "ownerAlwaysHard": {
+      "type": "boolean",
+      "description": "主人（主人识别插件里的 QQ 号）叫机器人并提问时，不管难不难都走 DeepSeek 官方。",
+      "label": "主人提问一律走 DeepSeek"
+    },
+    "freeFailoverToHard": {
+      "type": "boolean",
+      "description": "免费主模型超时熔断的那段时间（默认 10 分钟），日常消息也先走 DeepSeek 官方（付费，和难题共用每小时上限）；超限或带图时退回另一个免费模型。关掉则直接退回免费模型。",
+      "label": "免费主模型故障时改走 DeepSeek 官方"
+    }
+  }
+}

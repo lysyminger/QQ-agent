@@ -1,0 +1,159 @@
+{
+  "id": "knowledge-base",
+  "name": "本地知识库",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "把一个 txt / md 文件丢进 data/knowledge-base/，机器人就自动学会了：它回答前先翻本地知识库，翻不到才上网搜，搜到的东西自动存进 learned/ 子目录，下次直接命中、不用再搜。纯本地检索，不花 token 也不联网；全部是明文文件，随时可以打开看、改、删。提供 kb_search / kb_read / kb_remember / kb_status 四个工具。",
+  "author": "本机定制",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": true,
+  "capabilities": ["knowledge.search", "knowledge.write"],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "maxFileKB": 1024,
+    "watchDebounceMs": 800,
+    "injectMode": "index",
+    "indexMaxChars": 600,
+    "hitLimit": 3,
+    "hitMaxChars": 1200,
+    "snippetChars": 400,
+    "minScore": 0.12,
+    "stopWords": "",
+    "allowWrite": true,
+    "requireSource": true,
+    "defaultLimit": 5,
+    "maxLimit": 15,
+    "learnedMaxChars": 4000,
+    "learnedMaxFiles": 500
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用本地知识库",
+      "description": "关掉后不再索引、不再注入，机器人也查不到本地知识（会退回纯联网搜索）。文件都还在，重新打开就恢复。"
+    },
+    "maxFileKB": {
+      "type": "number",
+      "label": "单个文件大小上限（KB）",
+      "description": "超过这个大小的文件跳过不索引（会记进状态里让你看见，不会静默忽略）。默认 1024KB = 1MB。",
+      "min": 64,
+      "max": 16384,
+      "step": 64
+    },
+    "watchDebounceMs": {
+      "type": "number",
+      "label": "文件变动后的等待时间（毫秒）",
+      "description": "往目录里复制文件时，系统会多次触发变动事件；等这么久没有新变动再重建索引，避免同一个文件被反复重新索引。默认 800。",
+      "min": 200,
+      "max": 10000,
+      "step": 100
+    },
+    "injectMode": {
+      "type": "enum",
+      "label": "什么时候把知识塞给机器人",
+      "values": ["index", "hit", "off"],
+      "description": "index = 每轮都带一份「有哪些资料」的目录（每条一行，很省），这轮话题命中某条时才把详情给它 —— 最不容易忘、也最省 token，推荐；hit = 只有话题命中才给，更省但机器人可能想不起来你有资料；off = 什么都不主动给，只靠它自己调用查询工具。"
+    },
+    "indexMaxChars": {
+      "type": "number",
+      "label": "目录清单长度上限（字符）",
+      "description": "index 模式下每轮都要发，所以必须封顶。默认 600 字符，大约等于 20 来条资料的名字。超出的资料只显示「还有 N 条」，机器人仍可用查询工具找到它们。",
+      "min": 100,
+      "max": 3000,
+      "step": 100
+    },
+    "hitLimit": {
+      "type": "number",
+      "label": "命中时最多给几条详情",
+      "description": "默认 3 条。给太多会把上下文塞满，反而挤掉聊天本身。",
+      "min": 1,
+      "max": 10,
+      "step": 1
+    },
+    "hitMaxChars": {
+      "type": "number",
+      "label": "命中详情总长度上限（字符）",
+      "description": "默认 1200 字符。命中多条时按相关度依次截断，保证不超这个总量。",
+      "min": 200,
+      "max": 6000,
+      "step": 100
+    },
+    "snippetChars": {
+      "type": "number",
+      "label": "查询工具返回的片段长度（字符）",
+      "description": "机器人主动调用查询工具时，每条给多长的内容。默认 400；它可以再用 kb_read 读全文，所以这里不用给太长。",
+      "min": 80,
+      "max": 2000,
+      "step": 20
+    },
+    "minScore": {
+      "type": "number",
+      "label": "命中门槛",
+      "description": "相关度低于这个值就不算命中（防止随便聊一句就把不相关的资料塞进去）。默认 0.12。经常漏掉该给的知识就调低，经常乱塞不相关的就调高。",
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    },
+    "stopWords": {
+      "type": "string",
+      "label": "不参与匹配的词",
+      "description": "这些词会被检索忽略，避免它们造成误命中。多个词用逗号或空格分隔。比如你的资料里到处都出现「客服」，就把「客服」填进来。",
+      "multiline": true
+    },
+    "allowWrite": {
+      "type": "boolean",
+      "label": "允许机器人自己记东西",
+      "description": "开启后，机器人联网搜到有用的内容会存进 learned/ 子目录，下次直接命中、不用再搜（这是「搜到了就也放到本地知识库」的实现）。关掉则知识库只读，只能靠你手动放文件。"
+    },
+    "requireSource": {
+      "type": "boolean",
+      "label": "记录时必须带来源",
+      "description": "开启后，机器人记录知识时必须写明来源（网址或搜索结果标题），方便你事后核对真假。建议开着 —— 没有来源的自动记录很容易把模型编的东西也存进来。"
+    },
+    "defaultLimit": {
+      "type": "number",
+      "label": "查询默认返回几条",
+      "description": "机器人调用查询工具、没指定条数时给几条。默认 5 —— 命中通常只需要最相关的两三条。",
+      "min": 1,
+      "max": 15,
+      "step": 1
+    },
+    "maxLimit": {
+      "type": "number",
+      "label": "查询最多返回几条",
+      "description": "默认 15。上限的作用是防止模型一次要走整个库、把上下文塞满。",
+      "min": 1,
+      "max": 30,
+      "step": 5
+    },
+    "learnedMaxChars": {
+      "type": "number",
+      "label": "单次最多记多少字",
+      "description": "机器人一次最多往 learned/ 写这么多字。默认 4000 —— 它是从搜索结果里摘的，太长说明它在整篇搬运，那既没用又占地方。",
+      "min": 200,
+      "max": 20000,
+      "step": 100
+    },
+    "learnedMaxFiles": {
+      "type": "number",
+      "label": "learned 目录最多留几个文件",
+      "description": "超过就删掉最旧的（按文件修改时间）。防止长期运行后无限膨胀。默认 500。",
+      "min": 10,
+      "max": 5000,
+      "step": 10
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "knowledge-base-rules",
+        "title": "本地知识库",
+        "priority": 58,
+        "content": "你有一个本地知识库（用户放的资料 + 你自己记下的东西），可信度**高于网上搜索**。回答事实性问题时的顺序是硬性的：**先本地，后联网**，不要跳步。\n1. 先用 kb_search 查本地知识库。它不花钱、不花时间，而且用户特意放进去的资料往往比网上泛泛的文章更准。别在没查本地的情况下直接联网搜 —— 那等于用户放的资料白放了。\n2. 本地确实没有，再 web_search / web_fetch。\n3. 搜到了**有长期价值**的内容（名词定义、来龙去脉、工具用法、群里约定），用 kb_remember 记回本地库并写上来源，下次直接命中。\n4. 只是当下的临时信息（今天天气、正在变的股价、某条新闻的最新进展）**不要记** —— 记下去过几天就是错的，比不记更糟。\n\n几条别踩的坑：\n- kb_search 返回的是**截断片段**（带省略号），要引用细节、数字、步骤时用 kb_read 读全文，不要凭片段猜后半句。\n- 本地资料也可能旧了或写错了。它和你的判断冲突时以事实为准，拿不准就去核实，别因为是「本地资料」就照说。\n- 原话不要照搬给群友，用你自己的话讲。\n- 这些都是你自己的动作，不要跟群友汇报「我先查一下本地知识库」。"
+      }
+    ]
+  }
+}

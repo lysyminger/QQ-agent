@@ -1,0 +1,200 @@
+{
+  "id": "qq-file-intake",
+  "name": "收件箱（QQ / 微信传来的文件）",
+  "version": "1.1.1",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "enabledByDefault": true,
+  "permissions": ["web_fetch"],
+  "description": "把别人（默认只认主人）在 QQ 里发来的文件、以及微信收到的文件，自动搬进机器人能读的地方：QQ 的落到「文档文件夹/qq/」，微信的落到「文档文件夹/wx/」（剪切搬移，微信原件不再留副本）。落盘后机器人用文档阅读技能（doc_list / doc_read）就能直接读内容，不再只看到一句「[文件xxx.pdf]」。主人可以用口令把它追加送进「本地知识库」（\\收件箱 看清单、\\入库 文件名 进知识库），入库同样是剪切：正文抽成 md 进 knowledge-base，原件移进「已入库」。纯本地：不调模型、不花 token（下载与搬移是确定性的）。",
+  "requires": [],
+  "capabilities": [
+    "file-intake.status",
+    "file-intake.list",
+    "file-intake.ingest",
+    "file-intake.take"
+  ],
+  "commandRoute": [
+    {
+      "commands": ["收件箱", "收到的文件", "文件列表", "收件列表"],
+      "tool": "intake_list",
+      "ownerOnly": true,
+      "hidden": true
+    },
+    {
+      "commands": ["入库", "收进知识库", "存进知识库"],
+      "tool": "intake_ingest",
+      "ownerOnly": true,
+      "hidden": true
+    },
+    {
+      "commands": ["收件帮助", "文件帮助", "收件箱帮助"],
+      "tool": "intake_help",
+      "ownerOnly": true,
+      "hidden": true
+    }
+  ],
+  "tools": [
+    { "id": "intake_list", "name": "收件箱清单", "description": "列出 QQ / 微信收到并已落盘的文件（主人专属口令 \\收件箱）" },
+    { "id": "intake_ingest", "name": "文件入库", "description": "把某个文件送进本地知识库（主人专属口令 \\入库 文件名）" },
+    { "id": "intake_help", "name": "收件箱帮助", "description": "收件箱的用法说明（主人专属口令 \\收件帮助）" }
+  ],
+  "settings": {
+    "enabled": true,
+    "takeQQ": true,
+    "takeWx": true,
+    "onlyOwner": true,
+    "documentsDir": "",
+    "maxFileMB": 60,
+    "syncWaitMs": 8000,
+    "maxFilesPerRun": 3,
+    "hintInPrompt": true,
+    "autoIngestOwner": false,
+    "wxRoots": "",
+    "wxExts": "pdf,doc,docx,ppt,pptx,xls,xlsx,txt,md,csv,json,rtf,odt,wps,zip",
+    "wxReceipt": true,
+    "receiptTo": "",
+    "wxMoveMode": "cut",
+    "wxScanMinutes": 3,
+    "wxMinAgeSec": 20,
+    "wxBackfillDays": 0,
+    "logKeepDays": 14
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "总开关",
+      "description": "关掉后 QQ 不再自动下载文件、微信目录也不再搬移（已落盘的文件不受影响）。"
+    },
+    "takeQQ": {
+      "type": "boolean",
+      "label": "接管 QQ 发来的文件",
+      "description": "QQ 里发来的文件自动下载到「文档文件夹/qq/」。关掉就只处理微信那一路。"
+    },
+    "takeWx": {
+      "type": "boolean",
+      "label": "接管微信收到的文件",
+      "description": "盯着微信的接收目录，按下面的类型与间隔把新文件剪切搬进「文档文件夹/wx/」。"
+    },
+    "onlyOwner": {
+      "type": "boolean",
+      "label": "只下载主人的文件",
+      "description": "开着（默认）：群里别人的文件一律不碰，只有主人 QQ 发来的才下载。关掉：谁发来的都下载（入库仍只认主人）。"
+    },
+    "documentsDir": {
+      "type": "string",
+      "label": "文档文件夹（留空 = 默认）",
+      "description": "留空 = QQ Agent 的 data/documents（推荐，和「文档阅读」技能的默认目录一致）。填绝对路径则两处都要填成一样。"
+    },
+    "maxFileMB": {
+      "type": "number",
+      "label": "单个文件最大 MB",
+      "default": 60,
+      "min": 1,
+      "max": 1024,
+      "step": 1,
+      "description": "超过就只记一行日志、不下载（QQ 传的大视频很容易上百 MB）。"
+    },
+    "syncWaitMs": {
+      "type": "number",
+      "label": "回复前最多等多久（毫秒）",
+      "default": 8000,
+      "min": 0,
+      "max": 60000,
+      "step": 500,
+      "description": "文件来的这一轮，机器人会先等下载完再回答（这样它当场就能读）。等超了就转后台继续下，不卡住回复。"
+    },
+    "maxFilesPerRun": {
+      "type": "number",
+      "label": "每轮最多处理几个文件",
+      "default": 3,
+      "min": 1,
+      "max": 20,
+      "step": 1,
+      "description": "一波刷好几个文件时，先处理前几个，剩下的下一轮继续。"
+    },
+    "hintInPrompt": {
+      "type": "boolean",
+      "label": "把「刚收到文件」告诉机器人",
+      "description": "开着时，文件落盘后在那一轮对话末尾追加一行提示（含文件名与子目录），机器人当场就知道有文件可读。"
+    },
+    "autoIngestOwner": {
+      "type": "boolean",
+      "label": "主人的文件自动进知识库",
+      "description": "默认关：文件只先进文档文件夹（要用 \\入库 文件名 手动追加）。打开后主人发来的文件会立刻抽正文写进本地知识库。"
+    },
+    "wxRoots": {
+      "type": "string",
+      "label": "微信数据目录（留空 = 自动探测）",
+      "description": "多个用分号隔开。留空会自动找常见位置（各盘符下的 xwechat_files、文档里的 xwechat_files）。"
+    },
+    "wxExts": {
+      "type": "string",
+      "label": "微信只搬这些类型",
+      "description": "逗号分隔的扩展名。默认搬文档 + zip（压缩包）。填 * 表示不限类型 —— 那会把微信里网友发的安装包、游戏包也一起搬进来。"
+    },
+    "wxReceipt": {
+      "type": "boolean",
+      "label": "搬完私发主人一张回执单",
+      "description": "开着（默认）：微信文件每搬完一轮，私聊主人一条回执（文件名、大小、来源月份、剪贴还是复制）。一轮只发一条，不会一个文件一条把私聊打爆。发不出去只写日志，绝不影响搬移本身。"
+    },
+    "receiptTo": {
+      "type": "string",
+      "label": "回执发给谁（留空 = 自动认主人）",
+      "description": "留空自动用「主人识别」（owner-identity）里的主人 QQ技能里配置的主人 QQ。填了则只发给这里填的号，多个用逗号分隔、只取第一个。"
+    },
+    "wxMoveMode": {
+      "type": "select",
+      "title": "微信文件搬移方式",
+      "label": "微信文件搬移方式",
+      "options": ["cut", "copy"],
+      "description": "cut（默认，剪贴）= 搬走后微信接收目录里的原件删掉，不留重复副本；copy = 只复制一份，微信原件保留。"
+    },
+    "wxScanMinutes": {
+      "type": "number",
+      "label": "微信目录扫描间隔（分钟）",
+      "default": 3,
+      "min": 1,
+      "max": 240,
+      "step": 1,
+      "description": "目录监听是主路径，定时扫描是兜底（监听偶发漏事件时补上）。调大更省资源。"
+    },
+    "wxMinAgeSec": {
+      "type": "number",
+      "label": "微信文件多大才算写完（秒）",
+      "default": 20,
+      "min": 0,
+      "max": 600,
+      "step": 5,
+      "description": "微信下载中的文件大小还在变，太早搬会搬走半截文件。默认等文件 20 秒没再改动才搬。"
+    },
+    "wxBackfillDays": {
+      "type": "number",
+      "label": "微信往回补多少天（默认 0）",
+      "default": 0,
+      "min": 0,
+      "max": 365,
+      "step": 1,
+      "description": "0 = 只处理装好插件之后收到的新文件（不会动你以前的历史存档）。填 7 就顺手把最近 7 天的文件也搬过来。"
+    },
+    "logKeepDays": {
+      "type": "number",
+      "label": "日志保留天数",
+      "default": 14,
+      "min": 1,
+      "max": 365,
+      "step": 1,
+      "description": "收件箱自己的日志（data/logs/qq-file-intake.log），记录每个文件的下载/搬移/入库结果。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "file-intake-rules",
+        "title": "收到文件",
+        "priority": 45,
+        "content": "主人的 QQ 文件会自动存进「文档文件夹」的 qq/ 子目录、微信收到的存进 wx/ 子目录（剪贴搬移）。用户说「我刚发的文件」「那份 PDF」「微信发你的」时：doc_list 看最新、doc_read 读正文（name 可直接给文件名），不要凭文件名猜内容、不要编路径；读不出（扫描件 / 旧版 .doc/.ppt）就把工具给的原因照实说。主人专属口令：\\收件箱 看清单、\\入库 文件名 追加进本地知识库（群友让你入库时说明这是主人的权限）。"
+      }
+    ]
+  }
+}

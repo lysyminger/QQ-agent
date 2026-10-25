@@ -1,0 +1,18 @@
+{
+  "id": "self-tools",
+  "name": "自己写的工具",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "机器人自己写的工具都放在这里（tools/ 下一个文件一个工具）。大脑发现缺能力时提需求，codex-bridge 的工具工坊让 Codex 按 README 的约定写好、自测通过后放进 tools/，热重载自动加载。删掉某个文件就等于下线那个工具。",
+  "author": "机器人自己",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": true,
+  "capabilities": [],
+  "requires": [],
+  "settings": { "enabled": true },
+  "configSchema": {
+    "enabled": { "type": "boolean", "label": "启用自己写的工具", "description": "关掉后 tools/ 里的工具全部不加载（文件还在）。" }
+  }
+}

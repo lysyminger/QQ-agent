@@ -1,0 +1,193 @@
+{
+  "id": "codex-bridge",
+  "name": "Codex 遥控（仅主人）",
+  "version": "2.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "让主人在 QQ 里直接使唤本机的 Codex CLI。只认主人 QQ 号（主人识别插件里配置的），固定指令、不经过模型：「菜单」看指令和当前状态；「切换」进入 / 退出 Codex 模式（进入后主人在这个会话发的文字和图片都交给 Codex，喵喵不插话；Codex 用喵喵的口吻回话，群里还会附上最近的群聊作参考）；「模型 xxx」「思考 high」「权限 只读/可写/完全」「目录 路径」随时调整；「新会话」让 Codex 忘掉之前的对话；「停止」中断正在跑的任务。⚠️ Codex 能在这台电脑上读写文件、执行命令，别人发的消息永远不会交给它。",
+  "enabledByDefault": true,
+  "capabilities": [
+    "codex.run",
+    "status.codex-bridge",
+    "llm.agent-backend",
+    "video.frames",
+    "video.frames.available"
+  ],
+  "settings": {
+    "enabled": true,
+    "allowGroup": true,
+    "model": "",
+    "effort": "medium",
+    "sandbox": "workspace-write",
+    "workdir": "",
+    "timeoutMinutes": 15,
+    "maxReplyChars": 1500,
+    "maxReplyParts": 4,
+    "nodePath": "",
+    "codexJsPath": "",
+    "webSearch": true,
+    "ignoreStickers": true,
+    "publicImageGen": false,
+    "foodAuto": true,
+    "foodGroups": "",
+    "bannedWords": "屙屎",
+    "engine": "brain",
+    "brainEffort": "medium",
+    "brainRolloverTokens": 150000,
+    "learnEnabled": true,
+    "learnEvery": 80,
+    "learnEffort": "low",
+    "imageWaitMs": 7000
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "description": "关掉后所有指令都不响应（消息照常交给喵喵）。",
+      "label": "启用"
+    },
+    "allowGroup": {
+      "type": "boolean",
+      "description": "开着：主人在白名单群里发指令也生效（Codex 的回答群友能看到）。关掉：只在私聊生效。",
+      "label": "群里也能用"
+    },
+    "model": {
+      "type": "string",
+      "description": "留空 = 跟随 ~/.codex/config.toml（cc-switch 切到哪就用哪）。也可以发「模型 xxx」改、「模型 默认」改回跟随。",
+      "label": "Codex 模型"
+    },
+    "effort": {
+      "type": "string",
+      "description": "留空 = 跟随 Codex 配置。low / medium / high / xhigh / max（部分模型还有 ultra）。也可以发「思考 high」改、「思考 默认」改回跟随。",
+      "label": "思考程度"
+    },
+    "sandbox": {
+      "type": "enum",
+      "description": "read-only 只读；workspace-write 只能改工作目录；danger-full-access 不受限（危险）。也可以发「权限 只读/可写/完全」改。",
+      "label": "权限",
+      "values": [
+        "read-only",
+        "workspace-write",
+        "danger-full-access"
+      ]
+    },
+    "workdir": {
+      "type": "string",
+      "description": "Codex 在哪个目录干活，留空 = qq-agent 程序目录。也可以发「目录 路径」改（会自动开新会话）。",
+      "label": "工作目录"
+    },
+    "timeoutMinutes": {
+      "type": "number",
+      "description": "超过就强制结束这次任务。默认 15。",
+      "label": "单次任务超时（分钟）"
+    },
+    "maxReplyChars": {
+      "type": "number",
+      "description": "Codex 回答太长时按这个长度切成几条发。默认 1500。",
+      "label": "每条消息最多多少字"
+    },
+    "maxReplyParts": {
+      "type": "number",
+      "description": "超过就截断并提示。默认 4。",
+      "label": "最多发几条"
+    },
+    "nodePath": {
+      "type": "string",
+      "description": "Codex CLI 是 Node 程序；留空会在 PATH 里找。",
+      "label": "node.exe 路径（留空自动找）"
+    },
+    "codexJsPath": {
+      "type": "string",
+      "description": "留空会在 PATH 各目录的 node_modules/@openai/codex/bin/codex.js 里找。",
+      "label": "codex.js 路径（留空自动找）"
+    },
+    "webSearch": {
+      "type": "boolean",
+      "description": "打开 Codex 自带的联网搜索（--search）。Codex 模式和给其他插件跑的任务都会用到。",
+      "label": "Codex 联网搜索"
+    },
+    "ignoreStickers": {
+      "type": "boolean",
+      "label": "不回纯表情包",
+      "description": "Codex 模式下，只发了表情包（动画表情、商城表情、小黄脸）没打字的消息只留作上下文、不回；图片、视频、音乐/B站卡片照常按档位回应。"
+    },
+    "publicImageGen": {
+      "type": "boolean",
+      "label": "群友也能让 Codex 画图",
+      "description": "关着：只有主人能让 Codex 生图（生图很吃 ChatGPT 额度）。开着：群友在 Codex 模式下也能让它画。画好的图都会自动发到 QQ。"
+    },
+    "foodAuto": {
+      "type": "boolean",
+      "label": "群里问吃什么自动推荐",
+      "description": "群友说“吃什么”“饿了”“点外卖”之类时，从学校周边（浙江树人学院拱宸桥校区）高分店单里随机挑一家发出去。不限次数，同一条消息只推一次，最近推过的 15 家不重复。店单由 scripts/build-campus-guide.mjs 生成。"
+    },
+    "foodGroups": {
+      "type": "string",
+      "label": "自动推荐吃什么的群",
+      "description": "填群号（逗号分隔）就只在这些群自动推荐；留空 = 所有群。"
+    },
+    "bannedWords": {
+      "type": "string",
+      "label": "禁用词",
+      "description": "Codex 回复里绝对不要出现的词，用逗号分隔；提示词里会告诉它，万一写了也会被删掉。默认「屙屎」。"
+    },
+    "engine": {
+      "type": "enum",
+      "values": [
+        "brain",
+        "direct"
+      ],
+      "label": "Codex 模式的工作方式",
+      "description": "brain（推荐）：Codex 当 qq-agent 的\"大脑\"，常驻不重开、每轮只发新消息，qq-agent 原有的档位、插件、表情包、记忆、会话页全保留。direct：旧做法，每条消息单独起一次 Codex，绕开 qq-agent 自己回。"
+    },
+    "brainEffort": {
+      "type": "enum",
+      "values": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "label": "大脑思考档位",
+      "description": "群聊建议 medium：够聪明，也不会太慢太费额度。主人让电脑执行的任务另按上面的「思考」档位。"
+    },
+    "brainRolloverTokens": {
+      "type": "number",
+      "label": "大脑对话多长换新（token）",
+      "description": "一条 Codex 对话的上下文超过这么多 token 就换一条新的，重新给全量（防止越聊越贵）。默认 150000。"
+    },
+    "learnEnabled": {
+      "type": "boolean",
+      "label": "持续学习群聊",
+      "description": "Codex 模式的群每攒够一批新消息，Codex 在后台通读一遍：群友印象写进记忆，群里的梗 / 黑话 / 最近在聊什么写进知识库并注入给喵喵。主人也可以在群里发「学习」立刻学一次。"
+    },
+    "learnEvery": {
+      "type": "number",
+      "label": "每多少条新消息学一次",
+      "description": "默认 80。另外超过 6 小时没学、且有 20 条以上新消息时也会学一次。"
+    },
+    "learnEffort": {
+      "type": "enum",
+      "values": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "label": "学习时的思考档位",
+      "description": "默认 low：整理聊天不需要想太深，省额度。"
+    },
+    "imageWaitMs": {
+      "type": "number",
+      "label": "发图后等多久再回（毫秒）",
+      "description": "QQ 里常是先发图再打几句话：只发了图没打字时先等这么久，他接着说话就和图一起回，只回一次。默认 7000，填 0 不等。"
+    }
+  },
+  "tools": [
+    {
+      "id": "owner_task",
+      "name": "交给电脑执行",
+      "description": "主人专用：把主人的原话交给主人电脑上有完整权限的 Codex 去执行（改代码、跑命令、整理文件、画图等），做完返回结果。群友调用会被拒绝。",
+      "category": "utility",
+      "icon": "🛠"
+    }
+  ]
+}

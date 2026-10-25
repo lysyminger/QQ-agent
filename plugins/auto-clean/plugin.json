@@ -1,0 +1,184 @@
+{
+  "id": "auto-clean",
+  "name": "自动清理与压缩",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "按规则自动清理机器人的聊天存档与会话记录（省 token 的根子：存档越长，每次拼给模型的上下文越多），并在每次请求前做一次「重复消息去重」的确定性压缩。规则全部写死在配置里、不经过模型：到点自动扫描，只清「机器人自己的记忆」，绝不碰 QQ 里的任何消息，也不会替机器人发言。默认每次清理前把存档备份到 data/messages-purged/，后悔了能捞回来。",
+  "author": "本机定制",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": true,
+  "capabilities": [
+    "cleanup.brief"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "retainDays": 7,
+    "minIdleHours": 2,
+    "maxPerRun": 20,
+    "intervalMin": 30,
+    "onlyGroups": false,
+    "onlyPrivate": false,
+    "groupIds": "",
+    "privateIds": "",
+    "protectKeys": "",
+    "notifyOnPurge": false,
+    "notifyPrefix": "【自动清理】",
+    "backupBeforePurge": true,
+    "purgeSessions": false,
+    "compressRepeats": true,
+    "repeatWindowMin": 10,
+    "safeMode": false,
+    "trimEarlyMessages": false,
+    "maxCharsPerRequest": 24000,
+    "maxKeepMessages": 12,
+    "verbose": false
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用自动清理与压缩",
+      "description": "总开关。关掉后：不再定时清理存档，也不做重复消息去重，行为与没装这个插件完全一致（已经删掉的东西不会因此恢复）。"
+    },
+    "retainDays": {
+      "type": "number",
+      "label": "存档保留天数",
+      "description": "存档最后活跃时间超过这么多天的会话，会被整段清空。默认 7 天。调小＝更省 token、机器人更健忘；调到 3650 ≈ 实际不按天数清。",
+      "min": 1,
+      "max": 3650,
+      "step": 1,
+      "default": 7
+    },
+    "minIdleHours": {
+      "type": "number",
+      "label": "最少静默小时数",
+      "description": "会话至少安静了这么多小时才允许清理（防止把正在热聊的上下文截断）。默认 2 小时；填 1 表示「只要超过保留天数、且这一小时没人说话就可以清」。",
+      "min": 1,
+      "max": 8760,
+      "step": 1,
+      "default": 2
+    },
+    "maxPerRun": {
+      "type": "number",
+      "label": "每轮最多清理几个会话",
+      "description": "一次扫描最多清几个，防止一口气把所有存档清光。默认 20。",
+      "min": 1,
+      "max": 200,
+      "step": 1,
+      "default": 20
+    },
+    "intervalMin": {
+      "type": "number",
+      "label": "自动检查间隔（分钟）",
+      "description": "后台每隔多少分钟扫一次存档目录。默认 30。清理本身不花钱、不调模型，只是删文件。",
+      "min": 1,
+      "max": 1440,
+      "step": 1,
+      "default": 30
+    },
+    "onlyGroups": {
+      "type": "boolean",
+      "label": "只清群聊存档",
+      "description": "打开后只处理群会话，私聊存档一律保留。默认关闭（群和私聊都参与清理）。"
+    },
+    "onlyPrivate": {
+      "type": "boolean",
+      "label": "只清私聊存档",
+      "description": "打开后只处理私聊存档。和「只清群聊」同时打开时会互相抵消（等于都不清），不建议。默认关闭。"
+    },
+    "groupIds": {
+      "type": "internal",
+      "label": "只清理这些群（可选）",
+      "description": "在 data/auto-clean.json 的 state.json 里手动填？不需要——直接编辑 data/config.json 里 skills['auto-clean'].groupIds，写成群号，多个用英文逗号分隔（也支持换行、中文逗号）。留空 = 所有群。"
+    },
+    "privateIds": {
+      "type": "internal",
+      "label": "只清理这些好友（可选）",
+      "description": "同上：编辑 data/config.json 里 skills['auto-clean'].privateIds，填 QQ 号，多个用逗号分隔。留空 = 所有私聊。"
+    },
+    "protectKeys": {
+      "type": "internal",
+      "label": "永不清理的会话（保护名单）",
+      "description": "编辑 data/config.json 里 skills['auto-clean'].protectKeys，写 group:123 或 private:456，多个用逗号分隔。名单里的会话无论多旧都不会被清。"
+    },
+    "notifyOnPurge": {
+      "type": "boolean",
+      "label": "清理后在群里说一声",
+      "description": "默认关闭（安静）。开启后，清理完某个会话，机器人下次在该会话发言时会顺带说一句清了几条，避免群友觉得「它怎么突然失忆了」。"
+    },
+    "notifyPrefix": {
+      "type": "string",
+      "label": "清理提示前缀",
+      "description": "提醒群里时用的前缀文案，默认「【自动清理】」。"
+    },
+    "backupBeforePurge": {
+      "type": "boolean",
+      "label": "清理前备份存档",
+      "description": "默认开启：删除前先复制一份到 data/messages-purged/（文件很小，纯本地）。关掉后删了就真没了，建议保持开启。"
+    },
+    "purgeSessions": {
+      "type": "boolean",
+      "label": "同时删除控制台会话记录",
+      "description": "默认关闭。开启后连 data/sessions/ 里对应会话的调试留档（控制台「会话」页那些卡片）一起删。你选的是「只清机器人记忆、不碰 QQ」，所以默认不动它；调试留档单独清不影响机器人记忆。"
+    },
+    "compressRepeats": {
+      "type": "boolean",
+      "label": "重复消息去重（省 token）",
+      "description": "默认开启：同一个人在短时间里连发的、内容几乎一样的消息，在发给模型前合并成一条并标注连发次数。这是纯减法，不改语义、不调模型、不花钱。"
+    },
+    "repeatWindowMin": {
+      "type": "number",
+      "label": "去重时间窗（分钟）",
+      "description": "多久之内的相同内容算「连发」。默认 10 分钟。",
+      "min": 1,
+      "max": 1440,
+      "step": 1,
+      "default": 10
+    },
+    "safeMode": {
+      "type": "boolean",
+      "label": "去重安全模式（只合并完全相同的整条消息）",
+      "description": "默认关闭。关闭时会把「前缀相同、后面多几个字」的补话也视为重复（更像连发）；开启后只合并一字不差的完整重复。开启更保守。"
+    },
+    "trimEarlyMessages": {
+      "type": "boolean",
+      "label": "额外压缩早期上下文（与「Token 节流」插件重叠）",
+      "description": "默认关闭。开启后本插件也做一次早期消息压缩——和已有的「Token 节流」插件功能重叠，除非你停用了它或想更狠，否则没必要开。"
+    },
+    "maxCharsPerRequest": {
+      "type": "number",
+      "label": "额外压缩的触发字数",
+      "description": "配合上一项使用：一次请求的历史文本总字数超过这个值才动手压。默认 24000 字。",
+      "min": 2000,
+      "max": 200000,
+      "step": 1000,
+      "default": 24000
+    },
+    "maxKeepMessages": {
+      "type": "number",
+      "label": "额外压缩时保留最近几条",
+      "description": "配合「额外压缩」使用：至少保留最近这么多条原文，更早的压成一行摘要。默认 12 条。",
+      "min": 4,
+      "max": 200,
+      "step": 1,
+      "default": 12
+    },
+    "verbose": {
+      "type": "boolean",
+      "label": "输出节省/清理日志",
+      "description": "开启后每次去重、每轮清理都往控制台打一行，便于确认真的在工作（默认安静）。"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "auto-clean-note",
+        "title": "存档自动清理",
+        "priority": 30,
+        "content": "系统会自动清理过旧的聊天存档（只清你本地的记忆，QQ 群里的消息不会有任何变化）。所以：\n- 你的聊天记录里出现【较早对话已压缩】这类片段，或某段更早的对话你完全不记得，属于正常情况，不是出错。\n- 群友问「你还记得上次说的那件事吗」而你确实想不起来时，直接说不记得、或者让对方再说一遍，别硬猜、别编。\n- 很重要、不希望以后被清掉的信息，用 memory_append 记到长期记忆里 —— 长期记忆不受存档清理影响。\n- 不要主动跟群友提「我的存档被清理了」「我要省 token」这类内部机制细节。"
+      }
+    ]
+  }
+}

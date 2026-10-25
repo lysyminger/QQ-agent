@@ -1,0 +1,14 @@
+{
+  "skills": {
+    "netease-song-id": {
+      "enabled": true,
+      "settings": {
+        "enabled": true,
+        "limit": 5,
+        "timeoutMs": 8000,
+        "maxPerMinute": 10,
+        "showAlbum": true
+      }
+    }
+  }
+}

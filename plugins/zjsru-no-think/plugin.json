@@ -1,0 +1,12 @@
+{
+  "id": "zjsru-no-think",
+  "name": "学校 tokens：只走免费路由 + 关闭 DeepSeek 思考",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "tokens.zjsru.edu.cn 的 DeepSeek V4 Flash 默认会长时间思考（简单回复也能想 2000+ token、70s 以上甚至超时），给请求加上 chat_template_kwargs.thinking=false 关掉。",
+  "enabledByDefault": true,
+  "capabilities": ["llm.request-params"],
+  "settings": {},
+  "configSchema": {}
+}

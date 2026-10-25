@@ -1,0 +1,51 @@
+{
+  "id": "reply-window",
+  "name": "接话窗口（连续对话）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "entry": "index.js",
+  "author": "QQ Agent 扩展",
+  "description": "机器人刚说完话（主动提问、接梗、回了一句都算）之后的一小段时间里，刚才跟它说话的那个群友再发消息，即使没有 @ 它、也没有命中关键词，它也会继续接话，让群里的连续对话不会聊到一半就断掉。窗口只保存在内存里，重启即清空；别人插话、引用别人说的话都不会被当成接话。",
+  "enabledByDefault": true,
+  "permissions": [],
+  "capabilities": [
+    "message.follow-up-v2",
+    "message.follow-up-state"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "ttlMinutes": 3,
+    "maxFollowUps": 5,
+    "minChars": 1,
+    "openOnOwnInitiative": false
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用接话窗口",
+      "description": "开着：机器人说完话之后的一小段时间内，刚跟它说话的人不用再 @ 它就能接着聊。关掉：完全恢复原来的规则（只有 @、关键词、随机命中才会回话），本功能等于没装。"
+    },
+    "ttlMinutes": {
+      "type": "number",
+      "label": "接话窗口保留多久（分钟）",
+      "description": "机器人说完话之后，这个窗口持续多久。默认 3 分钟；窗口内对方一直有来有回就自动续期。调大＝更能连着聊，但也更容易接太多话；建议 1~10。"
+    },
+    "maxFollowUps": {
+      "type": "number",
+      "label": "一个窗口内最多回几句",
+      "description": "从机器人这次回话算起，这个窗口里它最多再主动接几句。默认 5；填 0 ＝ 不限次数（只靠上面的时间窗收口，适合想让对话自然延续的情况）。注意：真正让它停下的通常是时间——对方超过「窗口保留多久」没说话，窗口就关了。"
+    },
+    "minChars": {
+      "type": "number",
+      "label": "对方至少说几个字才算接话",
+      "description": "默认 1：只要不是空白就算。调大可避免对方只发一个「？」「嗯」时也触发一次回复。"
+    },
+    "openOnOwnInitiative": {
+      "type": "boolean",
+      "label": "主动起话题后也开窗口",
+      "description": "默认关。关着：只有机器人「回应了某个人」之后才开窗口（最不容易打扰群）。开着：它自己主动冒话（冷场开话题、发日报之类）之后也开窗口，那个群里的熟人接话就更容易接上。"
+    }
+  }
+}

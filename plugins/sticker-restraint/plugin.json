@@ -1,0 +1,63 @@
+{
+  "id": "sticker-restraint",
+  "name": "表情包不解读",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "description": "群聊/私聊里收到表情包（动画表情、QQ 表情、带标签的表情图）时，机器人只把它当作语气和态度来读，不主动描述画面、不解释梗、不点评它像什么。两种情况例外：表情包本身承载了需要回应的特定含义，或用户明确让你看（“看看这张图”“这表情什么意思”）。截图、照片、聊天记录图不受影响。",
+  "author": "",
+  "enabledByDefault": true,
+  "requires": [],
+  "capabilities": [],
+  "permissions": [],
+  "settings": {
+    "enabled": true,
+    "blockViewOnSticker": true,
+    "treatLabeledAsMeaning": true,
+    "allowWhenAsked": true,
+    "noteInPrompt": true,
+    "extraAskKeywords": ""
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用表情包不解读",
+      "description": "关掉后恢复原样（机器人可能又会主动描述表情包内容）。"
+    },
+    "blockViewOnSticker": {
+      "type": "boolean",
+      "label": "拦住“看表情包”这次调用",
+      "description": "开着：机器人想为了评论表情包而看图时，系统直接拦下并告诉它“这只是语气”。关掉：只靠提示词约束，仍可能去看图（不如开着稳）。"
+    },
+    "treatLabeledAsMeaning": {
+      "type": "boolean",
+      "label": "带标签的表情按标签理解",
+      "description": "像 [OK]、[好的]、[笑] 这类自带语义标签的表情，直接按标签的语气回应（这属于你说的“有特殊含义”，不当作要解读的图片）。"
+    },
+    "allowWhenAsked": {
+      "type": "boolean",
+      "label": "用户明确让看时放行",
+      "description": "开着：用户说“看看这张图”“这表情什么意思”时正常看图。关掉则一律不看。"
+    },
+    "noteInPrompt": {
+      "type": "boolean",
+      "label": "本轮有表情包时附加提醒",
+      "description": "本轮消息里出现表情包时，额外附一句“只当语气看”。关掉可省一点 token。"
+    },
+    "extraAskKeywords": {
+      "type": "string",
+      "label": "额外的“让我看”说法",
+      "description": "如果你平时用别的说法让机器人看图，填在这里（逗号或空格分隔），命中就当作“明确让你看”。例如：瞅一眼, 解读一下这张"
+    }
+  },
+  "prompt": {
+    "sections": [
+      {
+        "id": "sticker-restraint-rules",
+        "title": "表情包不解读",
+        "priority": 46,
+        "content": "【表情包怎么对待】收到的表情包（动图表情、QQ 表情、带标签的表情图）只当作**语气和态度**来读，不要把画面内容讲出来：\n- 不描述它画了什么（“这只猫好可爱”“图上写着…”），不解释它是什么梗，不点评它像谁/什么风格；\n- 带语义标签的表情（形如 [OK]、[好的]、[笑]）就按标签理解，直接顺着这个语气回应；\n- 只有两种情况才去谈论或查看它：① 它明显在承载需要回应的特定含义（比如对方用它表态、它就是正在聊的话题本身）；② 用户明确让你看（“看看这张图”“这表情什么意思”）。\n- 截图、照片、聊天记录截图不算表情包，该看照看、该分析照分析。\n- 不确定对方是不是要你评价这张表情包时，宁可先按语气回一句，也不要主动去解读图片。"
+      }
+    ]
+  }
+}

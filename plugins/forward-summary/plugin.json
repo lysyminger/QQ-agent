@@ -1,0 +1,91 @@
+{
+  "id": "forward-summary",
+  "name": "聊天记录预览",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "【吃瓜助手】展开合并转发与聊天截图，结合图片识别、分享卡片解析和本地OCR，按机器人当前性格精简概括。原图按设定数量上传，超限图片用OCR补充文字；无实质内容时群聊静默、私聊简短回应，沿用原有活跃度设置。",
+  "enabledByDefault": true,
+  "capabilities": [
+    "llm.request-params"
+  ],
+  "permissions": [
+    "web_fetch"
+  ],
+  "settings": {
+    "summaryChars": 160,
+    "maxNodes": 200,
+    "maxChars": 24000,
+    "maxImages": 6,
+    "adultFilter": true,
+    "ocrFirst": true,
+    "singleScreenshots": true,
+    "maxOcrImages": 40,
+    "maxOcrChars": 20000,
+    "requireAsk": true
+  },
+  "configSchema": {
+    "ocrFirst": {
+      "type": "boolean",
+      "label": "启用本地OCR补充",
+      "description": "先用OCR辅助辨认聊天截图，识别后仍按设定数量上传原图。超出上传上限的图片用OCR补充文字，不用OCR替代上限内原图。"
+    },
+    "maxOcrImages": {
+      "type": "number",
+      "label": "每轮OCR最多处理图片数",
+      "description": "默认40张，含前置辨认；成功识别会缓存。另有90秒总处理时间上限，超过或失败会明确标注未读。",
+      "min": 1,
+      "max": 120
+    },
+    "maxOcrChars": {
+      "type": "number",
+      "label": "每轮OCR文字总上限",
+      "description": "默认20000字符。OCR文字仍计入模型输入用量；超出时标注截断，不声称已读完整。",
+      "min": 2000,
+      "max": 60000
+    },
+    "singleScreenshots": {
+      "type": "boolean",
+      "label": "识别单发聊天截图",
+      "description": "默认开启。只有图片的单条消息也检查是否包含实质文字；仍由项目的群响应概率决定是否启动，私聊沿用核心规则。"
+    },
+    "adultFilter": {
+      "type": "boolean",
+      "label": "色色过滤模式",
+      "description": "默认开启：没有实质聊天内容时，群聊静默跳过，私聊简短回应一次。含聊天文字的图片继续识别；按内容判断，不是色情图像识别。"
+    },
+    "maxImages": {
+      "type": "number",
+      "label": "每轮上传原图数量上限",
+      "description": "默认6张，按原顺序上传，不足不凑数；失败图不占张数。其余图用OCR补文字。单张6MB、原图合计12MB；0为仅OCR。",
+      "min": 0,
+      "max": 12
+    },
+    "summaryChars": {
+      "type": "number",
+      "label": "概括目标字数",
+      "description": "默认约 160 字，通常 2～3 句话；保持当前群的人设语气。",
+      "min": 60,
+      "max": 400
+    },
+    "maxNodes": {
+      "type": "number",
+      "label": "每轮最多读取消息数",
+      "description": "含嵌套记录合计默认 200 条，上限 500 条；最多12次读取请求，超出说明只概括已读部分。",
+      "min": 20,
+      "max": 500
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "每轮读取总字数上限",
+      "description": "默认 24000 字符，上限 60000；限制长记录的模型用量。",
+      "min": 2000,
+      "max": 60000
+    },
+    "requireAsk": {
+      "type": "boolean",
+      "title": "只在有人要求时才总结",
+      "description": "本地修补：开着时只有群友明确说“总结一下 / 概括下聊天记录”之类才读转发并发概括；关掉则恢复原版行为（出现转发或单张图片就自动概括）。"
+    }
+  }
+}

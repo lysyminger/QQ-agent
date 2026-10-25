@@ -1,0 +1,14 @@
+{
+  "id": "long-image-reader",
+  "name": "长图分段识别",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "提交模型前自动将 JPEG/PNG 长截图分段，保留文字宽度；图片被明确拒收时建议降级为文字回复。使用桌面版内置图片解码器，不需要 ffmpeg 或 PowerShell。",
+  "enabledByDefault": false,
+  "requires": [],
+  "capabilities": ["llm.request-params", "llm.retry-advisor"],
+  "permissions": [],
+  "settings": {},
+  "configSchema": {}
+}

@@ -1,0 +1,105 @@
+{
+  "id": "inner-os",
+  "name": "内心OS外放",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "AI 思考了但决定不说话时，把它的心里话发出来，只对你指定的人生效。原理：每次会话结束且一条消息都没发（noreply），就把那轮模型写下的思考里最像「想说的话」的那句，套上你设定的格式发出去。群聊、拍一拍同样受名单约束：只认说话人/触发人的 QQ 号，在名单里才外放。默认演练模式，只在日志里写「本来想发什么」，确认效果后再关掉演练正式生效。",
+  "author": "本机定制",
+  "entry": "index.js",
+  "permissions": [
+    "web_fetch"
+  ],
+  "enabledByDefault": true,
+  "capabilities": [
+    "status.inner-os"
+  ],
+  "settings": {
+    "enabled": true,
+    "dryRun": true,
+    "targets": "",
+    "allowGroup": true,
+    "prefix": "（心里话）",
+    "maxChars": 80,
+    "minChars": 2,
+    "cooldownMinutes": 10,
+    "maxPerDay": 30,
+    "quietRange": "",
+    "stripBrackets": true,
+    "skipRepeats": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用内心OS外放",
+      "description": "总开关。关掉之后会话照常跑、不回就是不回，它不再补发任何心里话。",
+      "group": "总开关"
+    },
+    "dryRun": {
+      "type": "boolean",
+      "label": "演练模式（只在日志里说，不真发）",
+      "description": "打开后它照样判断、照样挑话，但只把「本来想发什么」写进程序的控制台，不真的发到 QQ。默认就是打开的：先填好名单观察几天，确认挑出来的句子像句人话再关掉。注意演练也会记冷却账（演练节奏 = 正式节奏），但不消耗每日额度。",
+      "group": "总开关"
+    },
+    "targets": {
+      "type": "string",
+      "label": "只对这些 QQ 外放（必填，留空 = 谁都不发）",
+      "description": "只认 QQ 号，多个号用逗号、空格或换行隔开，例如 2180443194, 2352008543。私聊看对方 QQ，群聊看触发那条消息的说话人 QQ。留空时它谁都不发——这是故意的，防止不小心把内心戏发给不熟的人。",
+      "group": "指定对象"
+    },
+    "allowGroup": {
+      "type": "boolean",
+      "label": "允许在群里外放",
+      "description": "打开时，群里触发人在名单里也会把心里话发到群里。关掉则只在私聊里外放，群聊会话一律跳过（即使触发人在名单里）。",
+      "group": "指定对象"
+    },
+    "prefix": {
+      "type": "string",
+      "label": "外放时的前缀",
+      "description": "发出去的每句心里话前面都会加上这个前缀，让对方知道这不是正经回复。可以留空（直接发原句），也可以改成别的，例如「OS：」。",
+      "group": "发送内容"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "心里话最多发多少字",
+      "description": "超过就截断并加省略号。默认 80。思考原文经常是长句，截短一点更像随口说出来的。",
+      "group": "发送内容"
+    },
+    "minChars": {
+      "type": "number",
+      "label": "太短的就不发（最少几个字）",
+      "description": "挑出来的句子不足这个字数就跳过。默认 2。设高一点可以过滤掉「嗯」「哦」这类单字。",
+      "group": "发送内容"
+    },
+    "stripBrackets": {
+      "type": "boolean",
+      "label": "去掉括号（思考里常用括号写内心戏）",
+      "description": "打开时（默认），句子首尾的括号会被去掉，例如「（这人好有意思）」变成「这人好有意思」，再套上你设的前缀发出去。关掉就原样发送。",
+      "group": "发送内容"
+    },
+    "cooldownMinutes": {
+      "type": "number",
+      "label": "同一个会话两次外放至少隔多久（分钟）",
+      "description": "防止连续几轮都不回、每轮都补一句心里话刷屏。默认 10 分钟，设 0 = 不限制。",
+      "group": "发送限制"
+    },
+    "maxPerDay": {
+      "type": "number",
+      "label": "每天最多外放几条（所有会话加起来）",
+      "description": "防话痨总闸，默认 30 条，到量当天就停、第二天重置。",
+      "group": "发送限制"
+    },
+    "skipRepeats": {
+      "type": "boolean",
+      "label": "跟刚发过的心里话重复就不发",
+      "description": "打开时（默认），挑出来的句子跟这个会话上次外放的内容一字不差就跳过。搭配截断使用，避免每次都是同一句。",
+      "group": "发送限制"
+    },
+    "quietRange": {
+      "type": "string",
+      "label": "安静时段：这段内不外放（写「开始-结束」，留空 = 不设）",
+      "description": "例如 00:00-07:00 ＝夜里零点到早上七点不外放。精确到分钟，支持跨零点（23:00-07:00）。留空就是全天都可能外放。",
+      "group": "勿扰时段"
+    }
+  }
+}

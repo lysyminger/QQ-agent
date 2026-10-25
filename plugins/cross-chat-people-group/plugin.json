@@ -1,0 +1,119 @@
+{
+  "id": "cross-chat-people-group",
+  "name": "认人认群（跨会话认人plus）",
+  "version": "1.3.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "entry": "index.js",
+  "description": "记得所有人和群，只在提到人名，群名之后才调用，省token",
+  "author": "AI 生成（QQ Agent 扩展）",
+  "enabledByDefault": true,
+  "capabilities": [
+    "memory.known-people"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "maxPeople": 2,
+    "maxImpressions": 3,
+    "injectInGroup": true,
+    "groupMinNameLen": 3,
+    "groupPeopleMax": 2,
+    "injectRoster": false,
+    "rosterOnQuestion": true,
+    "rosterMax": 8,
+    "privacyNote": true,
+    "groupPrivacyGuard": false,
+    "skipAtMentions": true,
+    "selfNames": "3331649402,小鲸鱼,大肥鱼",
+    "refreshMinutes": 5
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用认人（私聊 + 群成员）",
+      "description": "关掉后，同一个人在别人的私聊/群里又会被当成陌生人（回到没装之前的样子）。"
+    },
+    "maxPeople": {
+      "type": "number",
+      "label": "私聊里一次最多带几个人的资料",
+      "description": "默认 2。一句话里提到好几个人时，只带最相关的几个，避免提示词变长。"
+    },
+    "maxImpressions": {
+      "type": "number",
+      "label": "每人最多带几条印象",
+      "description": "默认 3 条，取最新的。印象就是「记忆」页里你看到（和手工编辑）的那些内容 —— 调大 = 更像你带出来的人，调小 = 更省 token。"
+    },
+    "injectInGroup": {
+      "type": "boolean",
+      "label": "群里也认人（默认开）",
+      "description": "群里有人被 @ 或提到名字时，把「本群的人 + 你对他的印象」带上。平时不注入（实测 200 条群消息只有 10 条触发，平均每条 6.5 token）。"
+    },
+    "groupMinNameLen": {
+      "type": "number",
+      "label": "群里名字至少几个字才算命中",
+      "description": "默认 3：群里重名和短名多，2 个字容易被误伤。调到 2 能认出更多简称（例如「一心」这种两字昵称），但误认的概率也会上升。"
+    },
+    "groupPeopleMax": {
+      "type": "number",
+      "label": "群里一次最多带几个人的资料",
+      "description": "默认 2。群里一条消息可能点到好几个人，限制一下免得提示词变长。"
+    },
+    "injectRoster": {
+      "type": "boolean",
+      "label": "私聊里额外贴上「我认识的人」名单（默认关，开了才有固定开销）",
+      "description": "关着时：消息里出现某个它认识的人的名字，才会认人（平时 0 token）。打开后：私聊会多贴一小段名单，好处是对方不点名（「你昨天说的人是谁」）时也能答上来，代价是每轮多花约 170 token。"
+    },
+    "rosterOnQuestion": {
+      "type": "boolean",
+      "label": "名单只在该贴时才贴（省 token）",
+      "description": "仅在「额外贴上名单」打开时有意义：默认开，只在这句话像在问某个人是谁时才贴；关掉 = 私聊每轮都贴（最不容易漏，也最费 token）。"
+    },
+    "rosterMax": {
+      "type": "number",
+      "label": "名单最多列几个人",
+      "description": "默认 8，填 0 = 不列名单。认识的人多时按最近聊过的排前面，多余的省略。"
+    },
+    "injectInGroup": {
+      "type": "boolean",
+      "label": "群里也认人（默认开）",
+      "description": "群里有人被 @ 或提到名字时，把「本群的人 + 你对他的印象」带上。平时不注入（实测 200 条群消息只有 10 条触发，平均每条 6.5 token）。"
+    },
+    "groupMinNameLen": {
+      "type": "number",
+      "label": "群里名字至少几个字才算命中",
+      "description": "默认 3：群里重名和短名多，2 个字容易被误伤。调到 2 能认出更多简称（例如「一心」这种两字昵称），但误认的概率也会上升。"
+    },
+    "groupPeopleMax": {
+      "type": "number",
+      "label": "群里一次最多带几个人的资料",
+      "description": "默认 2。群里一条消息可能点到好几个人，限制一下免得提示词变长。"
+    },
+    "privacyNote": {
+      "type": "boolean",
+      "label": "带上隐私与身份约束（默认开，建议别关）",
+      "description": "两条一起：① 同一个 QQ 号在群里和私聊里认成同一个人（态度、称呼一致）；② 私聊内容绝不外传 —— 不转发、不复述、不暗示，群聊内容则可以正常复述。"
+    },
+    "groupPrivacyGuard": {
+      "type": "boolean",
+      "label": "群聊里每轮都加一条隐私硬规则（默认关 = 群里不认到人就不花 token）",
+      "description": "默认关：插件只在你（或群里某人）**提到它认识的人名**时才动手，闲聊一句都不花。打开后群聊每轮都会多一句「私聊内容绝不外传」的兜底提醒（约 76 token/轮），好处是连「没人被提到」的那些轮次也被约束。"
+    },
+    "skipAtMentions": {
+      "type": "boolean",
+      "label": "@ 的消息不认人（默认开，@ 自己除外）",
+      "description": "带 @（含全角＠、[at]、CQ:at）的消息跳过，0 token。**但 @ 机器人自己的消息不跳** —— 那是直接问它，正是它该认人的时候（例如「@小鲸鱼 你觉得一心是什么样的人」）。关掉后 @ 别人的消息也走认人流程。"
+    },
+    "selfNames": {
+      "type": "string",
+      "label": "机器人自己的账号信息（白名单：QQ 号或昵称）",
+      "description": "填机器人自己的 QQ 号和昵称，多个用逗号分隔。@ 到这些名字时不会被跳过、照常认人。已按本机预填：3331649402,小鲸鱼,大肥鱼。主判断其实是核心给的 atMe 标记，这里填了多一层兜底（也支持别人给你起的别名）。换号或改名后来这里改。"
+    },
+    "refreshMinutes": {
+      "type": "number",
+      "label": "名单刷新间隔（分钟）",
+      "description": "默认 5 分钟重新扫一遍本地记忆文件。刚聊过的人最多 5 分钟后进名单。"
+    }
+  },
+  "prompt": null
+}

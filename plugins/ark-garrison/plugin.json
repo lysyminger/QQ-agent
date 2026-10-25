@@ -1,0 +1,24 @@
+{
+  "id": "ark-garrison",
+  "name": "卫戍协议陪玩（开发中）",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "让喵喵用小号陪群友打明日方舟「卫戍协议·盟约」：MaaFramework 负责截图 / 识别 / 点击（毫秒级），Codex 只看整理好的局面文字做决定。当前只有底层与测速脚本（node plugins/ark-garrison/bench.mjs），还不会自己玩。依赖装在插件目录：cd plugins/ark-garrison && npm install。",
+  "author": "本机定制",
+  "entry": "index.js",
+  "permissions": [],
+  "enabledByDefault": false,
+  "capabilities": ["ark.bench"],
+  "requires": [],
+  "settings": {
+    "serial": ""
+  },
+  "configSchema": {
+    "serial": {
+      "type": "string",
+      "label": "模拟器序列号",
+      "description": "留空 = 自动用找到的第一台（雷电是 emulator-5554，MuMu 一般是 127.0.0.1:16384）。"
+    }
+  }
+}

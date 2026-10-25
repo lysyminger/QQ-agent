@@ -1,0 +1,124 @@
+{
+  "id": "probability-reply",
+  "name": "[省token]戳一戳概率回应",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "被戳一戳时按概率回应：回一句 / 回戳一下 / 不理；可选连戳管制——短时间被戳太多次就提示一句或直接屏蔽，随后进入冷却，发一条指令即可恢复。不理、回戳、连戳提示都不调用模型（零 token）。零 token 依赖较新的核心扩展点；老核心上概率照常工作，但「不理」那一次仍会调用一次模型。",
+  "enabledByDefault": true,
+  "capabilities": ["message.poke-gate", "message.gate", "tool.guard"],
+  "requires": [],
+  "settings": {
+    "masterEnabled": true,
+    "ignorePokes": false,
+    "replyPercent": 60,
+    "pokeBackPercent": 30,
+    "onlyWhenPoked": true,
+    "burstEnabled": false,
+    "burstCount": 5,
+    "burstWindowSec": 30,
+    "burstScope": "任何人",
+    "burstAction": "回复提示文本",
+    "burstText": "{别戳啦 再戳也不理你们了}·{戳够了没有，手别闲着了}",
+    "cooldownSec": 600,
+    "resumeCommand": "/戳·#戳",
+    "resumeWho": "任何人",
+    "resumeUserIds": "",
+    "resumeText": "好啦好啦，可以戳了",
+    "debugLog": false
+  },
+  "configSchema": {
+    "masterEnabled": {
+      "type": "boolean",
+      "label": "① 插件总开关",
+      "description": "关掉 = 本插件完全不生效：概率回应、回戳、连戳管制、恢复指令全部停用，戳一戳交回默认行为。注意：私聊里「机器人戳别人被误判成别人戳自己」的死循环修复属于核心修复，常态生效，不受这个开关影响。"
+    },
+    "ignorePokes": {
+      "type": "boolean",
+      "label": "② 无视戳一戳",
+      "description": "开启后针对机器人的戳一律不理，也不调用模型（零 token）。"
+    },
+    "replyPercent": {
+      "type": "number",
+      "label": "用文字回应的概率（%）",
+      "description": "命中会调用模型（花 token）。"
+    },
+    "pokeBackPercent": {
+      "type": "number",
+      "label": "回戳一下的概率（%）",
+      "description": "不调用模型。与上一项之和超过 100 时自动压缩。"
+    },
+    "onlyWhenPoked": {
+      "type": "boolean",
+      "label": "只处理「戳机器人自己」的戳一戳"
+    },
+    "burstEnabled": {
+      "type": "boolean",
+      "label": "开启连戳管制",
+      "description": "时间窗内被戳够设定次数就提示一句（或直接屏蔽）并进入冷却，冷却内一律不理，全程零 token。下面这组选项不勾选时默认折叠。"
+    },
+    "burstCount": {
+      "type": "number",
+      "label": "触发次数",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "burstWindowSec": {
+      "type": "number",
+      "label": "时间窗（秒）",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "burstScope": {
+      "type": "enum",
+      "values": ["任何人", "同一个人"],
+      "label": "次数怎么算",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "burstAction": {
+      "type": "enum",
+      "values": ["回复提示文本", "直接屏蔽不回复"],
+      "label": "触发后怎么做",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "burstText": {
+      "type": "string",
+      "multiline": true,
+      "label": "提示文本（多条随机抽一条）",
+      "description": "多条用 · 分隔；大括号只是包裹、不会发出去（如 {第一条}·{第二条}）。占位符：{count} 次数、{seconds} 冷却秒数、{minutes} 冷却分钟数。",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "cooldownSec": {
+      "type": "number",
+      "label": "冷却时长（秒）",
+      "description": "0 = 永久屏蔽，直到发恢复指令。",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "resumeCommand": {
+      "type": "string",
+      "label": "恢复指令",
+      "description": "多个用 · 分隔（如 /戳·#戳）；发送这整条消息即恢复，不要求 @ 机器人。",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "resumeWho": {
+      "type": "enum",
+      "values": ["任何人", "仅指定QQ号", "仅群管理员或群主"],
+      "label": "谁能发恢复指令",
+      "description": "私聊里没有管理员概念，选「仅群管理员或群主」时私聊视为允许。",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "resumeUserIds": {
+      "type": "string",
+      "label": "指定 QQ 号（逗号或空格分隔）",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "resumeText": {
+      "type": "string",
+      "label": "解除屏蔽时的回话",
+      "description": "留空 = 不回。",
+      "group": { "id": "burst", "title": "连戳管制", "openWhen": "burstEnabled" }
+    },
+    "debugLog": {
+      "type": "boolean",
+      "label": "输出掷骰/管制日志"
+    }
+  }
+}

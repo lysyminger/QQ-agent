@@ -1,0 +1,76 @@
+{
+  "id": "netease-song-id",
+  "name": "网易云搜歌",
+  "version": "1.1.5",
+  "apiVersion": 1,
+  "category": "utility",
+  "description": "输入歌名，输出网易云音乐的歌曲 ID。发「想知道 XXX 的 id」或「搜歌 XXX」这类话，机器人会查网易云并回一条「歌名 — 歌手 ｜ ID xxxxx」的列表（默认前 5 条，拿到 ID 后可在别处按 ID 精确分享/收藏）。歌名可以带空格和标点（如 Don't Be So Serious），也支持「歌名 歌手」一起写来提高准确度。⚠️ 与「点歌」技能（发音乐卡片）分工明确：要**精确 ID** 用本插件，想直接听歌用「点歌 / 我想听 xx」，两者互不干扰。",
+  "author": "QQ Agent",
+  "entry": "index.js",
+  "enabledByDefault": true,
+  "permissions": [],
+  "capabilities": [
+    "status.netease-song-id"
+  ],
+  "requires": [],
+  "commandOnly": true,
+  "commands": [
+    "歌id"
+  ],
+  "tools": [
+    {
+      "id": "song_id",
+      "name": "搜网易云歌曲ID",
+      "description": "按歌名搜索网易云音乐，返回匹配歌曲的 ID / 歌名 / 歌手 / 专辑列表。由指令直达链路调用（用户发 @机器人 \\歌id 歌名），模型一般不会见到它。",
+      "category": "utility",
+      "icon": "🎵"
+    }
+  ],
+  "commandRoute": [
+    {
+      "tool": "song_id",
+      "commands": [
+        "歌id"
+      ]
+    }
+  ],
+  "settings": {
+    "enabled": true,
+    "limit": 5,
+    "timeoutMs": 8000,
+    "maxPerMinute": 10,
+    "showAlbum": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用搜歌",
+      "description": "关掉后 \\歌id 不再是有效指令（发了也不响应）。",
+      "group": "搜歌"
+    },
+    "limit": {
+      "type": "number",
+      "label": "最多返回几首",
+      "description": "搜到同名歌时列出前几条（按网易云的相关度排序）。默认 5，最大 10。填 1 就只回最匹配的那首。",
+      "group": "搜歌"
+    },
+    "timeoutMs": {
+      "type": "number",
+      "label": "搜索超时（毫秒）",
+      "description": "单次请求网易云的最长时间，超时即放弃并回一句「超时」。默认 8000（8 秒）。",
+      "group": "搜歌"
+    },
+    "maxPerMinute": {
+      "type": "number",
+      "label": "每分钟最多查几次",
+      "description": "防止有人刷指令把网易云接口打爆。默认 10。超出的请求会被拒并提示稍后再试。",
+      "group": "搜歌"
+    },
+    "showAlbum": {
+      "type": "boolean",
+      "label": "显示专辑名",
+      "description": "开=列表里带上专辑名（同名歌更好区分）；关=只显示歌名、歌手、ID，更紧凑。",
+      "group": "搜歌"
+    }
+  }
+}

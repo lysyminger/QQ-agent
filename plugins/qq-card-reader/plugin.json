@@ -1,0 +1,106 @@
+{
+  "id": "qq-card-reader",
+  "name": "卡片内容还原（B站视频 / 小程序卡片）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "media",
+  "entry": "index.js",
+  "description": "群友转发 B站视频、QQ小程序时，QQ 发来的是 json「卡片」段，核心把它压成占位符 [卡片消息]，她就完全看不见内容（不知道是什么视频、不知道标题，更看不到画面）。这个插件把卡片原文捞回来并还原成她看得见的东西：来源 / 标题 / UP主 / 时长 / 播放量 / 简介 / 真实链接，**以及 B站 官方视频快照里的真实画面截图**（按时间顺序附给她看）。全程确定性执行、不经过模型判断，也不会遗漏。\n\n【怎么用】默认已能工作，不用配置。群里有人转发 B站视频卡片，她这一轮就能「看到」这张卡片并自然地聊内容。\n【旧消息】她还能用 card_open 工具主动打开较早那条卡片消息（聊天记录里的 #数字）。\n【画面从哪来】用的是 B站 官方进度条快照（真实帧），**不下载视频**，所以磁盘上零残留、不需要事后清理；切帧用 Electron 原生图像能力，全程内存完成。\n【省 token】设置里可以关掉画面、或只保留文字。",
+  "author": "本地自建",
+  "enabledByDefault": true,
+  "permissions": ["web_fetch"],
+  "capabilities": [
+    "card.decode",
+    "card.status"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "attachFrames": true,
+    "maxFrames": 6,
+    "maxCardsPerRun": 2,
+    "enrichPlainLinks": true,
+    "frameStyle": "auto",
+    "coverAsFallback": true,
+    "autoProbeVision": true,
+    "selfTest": "once",
+    "writeStatus": true,
+    "hookBudgetMs": 4000,
+    "requestTimeoutMs": 8000,
+    "maxSheetKB": 4096,
+    "debug": false
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用卡片还原",
+      "description": "关掉后卡片仍然显示为 [卡片消息]，她也就又看不见了。"
+    },
+    "attachFrames": {
+      "type": "boolean",
+      "label": "把视频真实画面给她看",
+      "description": "开启后，B站视频卡片会附上若干张**真实画面截图**（B站官方快照，不是封面），她就能聊视频内容。关掉则只给文字信息，省 token。"
+    },
+    "maxFrames": {
+      "type": "number",
+      "label": "一次看几张画面",
+      "description": "默认 6 张（1~12）。越多久越费 token；6 张通常够看出视频在讲什么。"
+    },
+    "maxCardsPerRun": {
+      "type": "number",
+      "label": "一轮最多还原几张卡片",
+      "description": "默认 2。防止有人一次刷一屏卡片把这一轮拖慢；超出的下一轮再说。"
+    },
+    "enrichPlainLinks": {
+      "type": "boolean",
+      "label": "纯 B站 链接也补画面",
+      "description": "除了卡片，如果群友直接把 b23.tv / bilibili.com 链接贴出来，也照样把信息和画面给她（默认开）。"
+    },
+    "frameStyle": {
+      "type": "string",
+      "label": "画面形式：auto / sheet / off",
+      "description": "auto=切成一张张单帧（推荐，最清楚）；sheet=直接给整张快照网格图（切帧不可用时的降级形式）；off=不要画面。"
+    },
+    "coverAsFallback": {
+      "type": "boolean",
+      "label": "拿不到画面时给封面图",
+      "description": "默认开。有些视频没有快照（比如直播回放），这时至少给一张封面。"
+    },
+    "autoProbeVision": {
+      "type": "boolean",
+      "label": "自动探测模型能否看图",
+      "description": "默认开。只发一条 1×1 像素的极小请求确认当前模型收不收图；确认不了就不附图（避免给纯文本模型塞图导致整轮失败）。结论缓存 7 天。"
+    },
+    "selfTest": {
+      "type": "string",
+      "label": "启动自检：once / always / off",
+      "description": "默认 once（每个版本跑一次）：检查本机能不能用 Electron 原生能力切帧，结果记在 data/skills/qq-card-reader/status.json。排障时可以设成 always。"
+    },
+    "writeStatus": {
+      "type": "boolean",
+      "label": "写状态文件",
+      "description": "默认开：把自检、视觉探测结论、统计写到 data/skills/qq-card-reader/status.json，方便查问题。"
+    },
+    "hookBudgetMs": {
+      "type": "number",
+      "label": "单轮还原时间预算（毫秒）",
+      "description": "默认 4000（钩子本身 5 秒超时）。超预算就先用已经拿到的部分（文字优先），绝不拖垮这一轮对话。"
+    },
+    "requestTimeoutMs": {
+      "type": "number",
+      "label": "单个网络请求超时（毫秒）",
+      "description": "默认 8000。会再按剩余预算收窄。"
+    },
+    "maxSheetKB": {
+      "type": "number",
+      "label": "单张图体积上限（KB）",
+      "description": "默认 4096。超过就不下载，避免异常大图拖慢这一轮。"
+    },
+    "debug": {
+      "type": "boolean",
+      "label": "调试日志",
+      "description": "打开后每还原一张卡片都会在控制台写一行（标题 + 画面张数）。"
+    }
+  },
+  "prompt": null
+}

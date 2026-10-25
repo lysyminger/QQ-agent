@@ -1,0 +1,135 @@
+{
+  "id": "kb-autolearn",
+  "name": "自动学习新词（接本地知识库）",
+  "version": "1.2.0",
+  "apiVersion": 1,
+  "category": "knowledge",
+  "description": "群里出现机器人不认识的专有名词（梗、作品、游戏、人物、事件…）时，后台自动联网查证（默认交给本机 Codex CLI，带联网搜索），提炼成结构化条目（类别 / 别名 / 来历 / 要点 / 关系 / 来源）写进「本地知识库」的 learned/，下次直接命中不用再搜。定时或手动「整合」：合并重复条目、归纳专题总览页、给条目之间连关系、深挖内容少的条目。另提供一个工具：聊天中遇到不懂的词可以当场学。资料对不上这个词就不存，宁缺毋滥。",
+  "enabledByDefault": true,
+  "settings": {
+    "enabled": true,
+    "autoScan": true,
+    "scanIntervalSec": 120,
+    "minMessages": 8,
+    "maxTermsPerScan": 2,
+    "maxTermsPerHour": 6,
+    "fetchPages": 4,
+    "relearnDays": 30,
+    "notFoundRetryDays": 7,
+    "verbose": false,
+    "maxFacts": 10,
+    "consolidateEnabled": true,
+    "consolidateIntervalHours": 12,
+    "enrichPerRun": 5,
+    "manualAction": "",
+    "lastResult": "",
+    "engine": "codex",
+    "codexModel": "gpt-6-luna",
+    "codexEffort": "low"
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "description": "总开关。关掉后不再后台学习，学习工具也会拒绝；已学到的条目留在知识库里不受影响。",
+      "label": "启用"
+    },
+    "autoScan": {
+      "type": "boolean",
+      "description": "开着：定时从最近的群聊里挑出不认识的词自动去查。关掉：只在机器人聊天时自己调用学习工具才学。",
+      "label": "后台自动学习"
+    },
+    "scanIntervalSec": {
+      "type": "number",
+      "description": "后台多久看一次攒下的新消息。默认 120 秒。",
+      "label": "扫描间隔（秒）"
+    },
+    "minMessages": {
+      "type": "number",
+      "description": "一个会话攒够这么多条群友消息才挑一次词，避免零散几句也去调模型。默认 8。",
+      "label": "至少攒几条新消息才扫"
+    },
+    "maxTermsPerScan": {
+      "type": "number",
+      "description": "一次扫描最多挑几个词去查。默认 2。",
+      "label": "每次最多学几个词"
+    },
+    "maxTermsPerHour": {
+      "type": "number",
+      "description": "所有会话合计。每个词大约 1 次搜索 + 2 次网页 + 2 次模型调用。默认 6。",
+      "label": "每小时最多学几个词"
+    },
+    "fetchPages": {
+      "type": "number",
+      "description": "搜索后打开前几个最相关的结果读正文（萌娘百科词条另算）。默认 4，范围 1~6。读得越多条目越详细，也越慢。",
+      "label": "每个词读几个网页"
+    },
+    "relearnDays": {
+      "type": "number",
+      "description": "学过的词多久之后才允许再查一次（时效性强的条目会在这之后刷新）。默认 30 天。",
+      "label": "多少天后允许重新学"
+    },
+    "notFoundRetryDays": {
+      "type": "number",
+      "description": "资料对不上或查不到的词，冷却多少天再试。默认 7 天。",
+      "label": "查不到的词多久后重试"
+    },
+    "verbose": {
+      "type": "boolean",
+      "description": "打开后每一步（挑词、搜索、写入）都写日志，方便确认它在工作。",
+      "label": "详细日志"
+    },
+    "maxFacts": {
+      "type": "number",
+      "description": "默认 10。整合时合并进来的要点可以再多 4 条。",
+      "label": "每个词最多几条要点"
+    },
+    "consolidateEnabled": {
+      "type": "boolean",
+      "description": "定时把知识库整理一遍：合并重复条目、归纳专题总览页、给条目之间连关系、深挖内容少的条目、重试查不到的词。",
+      "label": "定时整合"
+    },
+    "consolidateIntervalHours": {
+      "type": "number",
+      "description": "默认 12 小时。",
+      "label": "整合间隔（小时）"
+    },
+    "enrichPerRun": {
+      "type": "number",
+      "description": "深挖 = 对要点太少 / 来源太少 / 没有关系的条目重新联网查一遍并合并。每个词约 3~4 次搜索。默认 5。",
+      "label": "每次整合最多深挖几个词"
+    },
+    "manualAction": {
+      "type": "string",
+      "description": "整合 ＝ 立刻整合一次；学:词 ＝ 学一个词；重学:词 ＝ 强制重新查这个词并合并；删:词 ＝ 删掉这个词条。多条用分号隔开。执行完会自动清空，结果写在下面。",
+      "label": "手动操作（填了保存即执行一次）"
+    },
+    "lastResult": {
+      "type": "string",
+      "description": "整合 / 手动操作的结果会自动写在这里，不用填。",
+      "label": "上次操作结果（只读）",
+      "multiline": true
+    },
+    "engine": {
+      "type": "enum",
+      "description": "codex = 交给本机 Codex CLI 联网查证并提炼（需要「Codex 遥控」插件，用你的 ChatGPT 额度，Luna 很省）；builtin = 用控制台的搜索服务 + 聊天模型提炼。Codex 不可用时会自动退回 builtin。",
+      "label": "查证方式",
+      "values": [
+        "codex",
+        "builtin"
+      ]
+    },
+    "codexModel": {
+      "type": "string",
+      "description": "默认 gpt-6-luna（Plus 每 5 小时 350~3000 条，最省）。留空则跟随 Codex 配置。",
+      "label": "Codex 查证用的模型"
+    },
+    "codexEffort": {
+      "type": "string",
+      "description": "默认 low，查资料不需要深度思考。",
+      "label": "Codex 查证的思考程度"
+    }
+  },
+  "capabilities": [
+    "status.kb-autolearn"
+  ]
+}
