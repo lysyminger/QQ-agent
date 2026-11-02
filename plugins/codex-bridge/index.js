@@ -2298,7 +2298,40 @@ export const providers = {
   'video.frames': (args) => extractFrames(args),
 
   // Codex 大脑：Codex 模式会话里，qq-agent 调模型时换成 Codex（返回 null = 不接，走原来的模型）
-  'llm.agent-backend': (args) => (brainClaims(args) ? brain().complete(args) : null),
+  // 大脑抛错时核心会退回配置里的普通模型，这里记一笔给面板看
+  'llm.agent-backend': (args) => {
+    if (!brainClaims(args)) return null;
+    const b = brain();
+    return b.complete(args).catch((error) => { b.noteFailure(error); throw error; });
+  },
+
+  // Codex 面板（控制台「Codex」页）：大脑进程、各聊天的对话、用量
+  'codex.status': () => {
+    const s = settings();
+    const st = loadState();
+    const loc = locateCodex(s);
+    return {
+      ok: true,
+      enabled: s.enabled,
+      engine: s.engine,
+      model: s.model || '（跟随 ~/.codex/config.toml）',
+      effort: s.brainEffort,
+      effortAddressed: s.brainEffortAddressed,
+      webSearch: s.webSearch,
+      codexJs: loc.codexJs || '',
+      locateError: loc.error || '',
+      modes: Object.keys(st.modes || {}).filter((k) => st.modes[k]),
+      brain: s.engine === 'brain' ? brain().status() : null
+    };
+  },
+  'codex.control': async ({ action, chatKey } = {}) => {
+    const b = brain();
+    if (action === 'start') return { ok: true, status: await b.warmup() };
+    if (action === 'restart') { b.restart(); return { ok: true, status: await b.warmup() }; }
+    if (action === 'stop') { b.restart(); return { ok: true, status: b.status() }; }
+    if (action === 'reset-thread' && chatKey) { b.forget(String(chatKey)); return { ok: true, status: b.status() }; }
+    return { ok: false, error: `不认识的操作：${action}` };
+  },
 
   // 顶栏实时状态：哪些会话在 Codex 模式、有没有任务正在跑（核心 /api/status 收集带 route 字段的 status.*）
   'status.codex-bridge': () => {

@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { getConfig, updateConfig, deepMerge as deepMergeConfig, DATA_DIR } from './config.js';
 import { customSearch } from './web-search.js';
 import { listModels, chatCompletion, resolveApiKey, estimateCost, cacheHitRate } from './llm.js';
-import { resolveOfficialPrice, listOfficialPrices } from './model-prices.js';
+import { resolveOfficialPrice, listOfficialPrices, resolveModelPrice } from './model-prices.js';
 import { refreshPriceFeed, priceFeedStatus, initPriceFeed } from './price-feed.js';
 import {
   currentProviders, setProviderKey, testAllProviders, testOneProvider,
@@ -66,7 +66,7 @@ export function createRoutes(deps) {
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,
     readBody, authorize,
     snowlumaDir, snowlumaWsPort, snowlumaWebuiUrl, snowlumaStatus, snowlumaLogs,
-    launchSnowluma, stopSnowluma,
+    launchSnowluma, stopSnowluma, runBackfill,
     qqPortableStatus, qqPortableLogs, launchPortableQQ, stopPortableQQ,
     visionScan,
     buildUsageStats, buildUsageBreakdown,
@@ -264,6 +264,58 @@ export function createRoutes(deps) {
         try {
           const result = await launchSnowluma();
           return json(res, result.ok ? 200 : 400, result);
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      // Codex 面板：codex-bridge 插件通过 codex.status 能力上报；这里按价格表补上参考成本
+      method: 'GET', pattern: '/api/codex/status',
+      handler: async ({ res, json }) => {
+        const p = skillManager.getCapabilityProviders('codex.status', {})[0];
+        if (!p) return json(res, 200, { ok: false, error: 'codex-bridge 插件没有启用' });
+        try {
+          const st = await p.fn();
+          const price = resolveModelPrice(`codex/${getConfig().skills?.['codex-bridge']?.model || ''}`, getConfig());
+          const costOf = (u) => {
+            if (!u || !price) return null;
+            const fresh = Math.max(0, (u.prompt || 0) - (u.cached || 0));
+            return (fresh * (price.in || 0) + (u.cached || 0) * (price.cached ?? price.in ?? 0) + (u.completion || 0) * (price.out || 0)) / 1e6;
+          };
+          if (st?.brain?.usage) {
+            st.brain.usage.price = price ? { in: price.in, cached: price.cached, out: price.out, matched: price.matched || '' } : null;
+            st.brain.usage.todayCost = costOf(st.brain.usage.today);
+            st.brain.usage.last7Cost = costOf(st.brain.usage.last7);
+          }
+          return json(res, 200, st);
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/codex/control',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        const p = skillManager.getCapabilityProviders('codex.control', {})[0];
+        if (!p) return json(res, 409, { ok: false, error: 'codex-bridge 插件没有启用' });
+        try {
+          const r = await p.fn({ action: String(body.action || ''), chatKey: body.chatKey ? String(body.chatKey) : '' });
+          return json(res, r?.ok === false ? 400 : 200, r);
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
+      // 手动补拉一次：断线期间漏掉的消息（重连时会自动跑，这里给面板一个按钮）
+      method: 'POST', pattern: '/api/snowluma/backfill',
+      handler: async ({ res, json }) => {
+        if (!onebot.connected) return json(res, 409, { ok: false, error: 'OneBot 还没连上' });
+        try {
+          await runBackfill();
+          return json(res, 200, { ok: true, backfill: snowlumaStatus().backfill });
         } catch (error) {
           return json(res, 500, { ok: false, error: String(error?.message ?? error) });
         }

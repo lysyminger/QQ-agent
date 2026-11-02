@@ -11,7 +11,9 @@
     "status.codex-bridge",
     "llm.agent-backend",
     "video.frames",
-    "video.frames.available"
+    "video.frames.available",
+    "codex.status",
+    "codex.control"
   ],
   "settings": {
     "enabled": true,

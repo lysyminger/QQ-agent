@@ -799,5 +799,6 @@ function switchTab(name) {
   if (name === 'skills') loadModulePage('skill');
   if (name === 'plugins') loadModulePage('plugin');
   if (name === 'snowluma') loadSnowlumaPage();
+  if (name === 'codex') loadCodexPage();
   if (name === 'settings') loadSettings();
 }

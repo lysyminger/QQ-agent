@@ -67,7 +67,8 @@ function updateReadinessDots(s) {
   if (dots.length !== 4) return;
 
   const qq = s?.qqPortable || {};
-  const qqRunning = !!qq.running;
+  // 便携 QQ 或用户自己装的 QQ，任一在跑都算 QQ 内核就绪
+  const qqRunning = !!(qq.running || qq.hooked || qq.ownQq);
   const slRunning = !!s?.snowluma?.running;
   const obConnected = !!s?.onebot?.connected;
   const cfg = state.config || {};

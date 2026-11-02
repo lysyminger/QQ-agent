@@ -144,6 +144,17 @@ function deltaText(th, docs) {
   return parts.join('\n\n');
 }
 
+const zeroUsage = () => ({ prompt: 0, cached: 0, completion: 0, reasoning: 0 });
+function addUsage(into, d) {
+  for (const k of ['prompt', 'cached', 'completion', 'reasoning']) into[k] = (into[k] || 0) + (Number(d?.[k]) || 0);
+  return into;
+}
+/** 本地日期 YYYY-MM-DD；offset = 往前几天 */
+function localDay(offset = 0) {
+  const d = new Date(Date.now() - offset * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function userMcpServers(codexHome) {
   try {
     const toml = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
@@ -228,6 +239,69 @@ export class CodexBrain {
     this.runs = new Map();       // sessionId → run
     this.byThread = new Map();   // threadId → 正在进行的 run
     this.threads = this.#load();
+    // 用量：迟到的用量通知（这一轮已经交回 qq-agent 之后才到）先记在这里，算到同一条对话的下一轮头上
+    this.carry = new Map();      // threadId → { prompt, cached, completion, reasoning }
+    // 给面板看的进程状态
+    this.proc = { starts: 0, startedAt: 0, lastExit: null, lastError: '', failures: 0 };
+    this.usageLog = this.#loadUsage();
+  }
+
+  // ── 用量账本（data/codex-bridge/brain-usage.json，按天，留 60 天） ──
+
+  get #usageFile() { return path.join(path.dirname(this.deps.stateFile), 'brain-usage.json'); }
+
+  #loadUsage() {
+    try { const j = JSON.parse(fs.readFileSync(this.#usageFile, 'utf8')); if (j && j.days) return j; } catch { /* 第一次 */ }
+    return { days: {} };
+  }
+
+  #recordUsage(d, field = null) {
+    const row = this.usageLog.days[localDay(0)] ||= { turns: 0, prompt: 0, cached: 0, completion: 0, reasoning: 0, failures: 0 };
+    if (field) row[field] = (row[field] || 0) + 1;
+    if (d) for (const k of ['prompt', 'cached', 'completion', 'reasoning']) row[k] += d[k] || 0;
+    const keys = Object.keys(this.usageLog.days).sort();
+    for (const k of keys.slice(0, Math.max(0, keys.length - 60))) delete this.usageLog.days[k];
+    clearTimeout(this.usageSaveTimer);
+    this.usageSaveTimer = setTimeout(() => {
+      try { fs.mkdirSync(path.dirname(this.#usageFile), { recursive: true }); fs.writeFileSync(this.#usageFile, JSON.stringify(this.usageLog), 'utf8'); } catch { /* 下次再写 */ }
+    }, 2000);
+    this.usageSaveTimer.unref?.();
+  }
+
+  /**
+   * 用量通知：用 total（这条对话的累计值）和上次记下的累计值做差，而不是只加 last。
+   * last 只是最近一次请求的量，中间漏一条通知就少算一截；累计差值不会漏。
+   * 这一轮已经结束（run 不在了）的迟到通知不丢，挂到 carry，下一轮开始时并进去。
+   */
+  #onUsage(p) {
+    const tu = p.tokenUsage || {};
+    const last = tu.last || {};
+    const total = tu.total || null;
+    const n = (o, k) => Number(o?.[k]) || 0;
+    const th = Object.values(this.threads).find((t) => t?.id === p.threadId);
+    let d = { prompt: n(last, 'inputTokens'), cached: n(last, 'cachedInputTokens'), completion: n(last, 'outputTokens'), reasoning: n(last, 'reasoningOutputTokens') };
+    if (total && th?.usageTotal && n(total, 'inputTokens') >= n(th.usageTotal, 'inputTokens')) {
+      const diff = (k) => Math.max(0, n(total, k) - n(th.usageTotal, k));
+      d = { prompt: diff('inputTokens'), cached: diff('cachedInputTokens'), completion: diff('outputTokens'), reasoning: diff('reasoningOutputTokens') };
+    }
+    if (th) {
+      if (total) th.usageTotal = { inputTokens: n(total, 'inputTokens'), cachedInputTokens: n(total, 'cachedInputTokens'), outputTokens: n(total, 'outputTokens'), reasoningOutputTokens: n(total, 'reasoningOutputTokens') };
+      th.lastInput = n(last, 'inputTokens') || th.lastInput || 0;
+    }
+    const run = p.threadId ? this.byThread.get(p.threadId) : null;
+    if (run && !run.done) addUsage(run.usage, d);
+    else if (p.threadId) this.carry.set(p.threadId, addUsage(this.carry.get(p.threadId) || zeroUsage(), d));
+    this.#recordUsage(d);
+  }
+
+  #takeCarry(...threadIds) {
+    const u = zeroUsage();
+    for (const id of threadIds) {
+      if (!id || !this.carry.has(id)) continue;
+      addUsage(u, this.carry.get(id));
+      this.carry.delete(id);
+    }
+    return u;
   }
 
   #load() {
@@ -269,19 +343,36 @@ export class CodexBrain {
       log: this.deps.log,
       onMessage: (m) => this.#onMessage(m),
       onExit: (code) => {
+        this.proc.lastExit = { at: Date.now(), code: code ?? null, byUs: Boolean(server.killedByUs) };
         this.deps.log(`Codex 大脑进程退出（${code}），下次有消息时自动重启`);
         for (const run of this.runs.values()) this.#push(run, { type: 'done', error: 'Codex 进程意外退出' });
       }
     });
-    this.starting = server.start().then(() => { this.server = server; this.deps.log('Codex 大脑已启动（常驻）'); return server; })
+    this.starting = server.start().then(() => {
+      this.server = server;
+      this.proc.starts += 1;
+      this.proc.startedAt = Date.now();
+      this.deps.log('Codex 大脑已启动（常驻）');
+      return server;
+    }).catch((e) => { this.proc.lastError = `启动失败：${e?.message ?? e}`; throw e; })
       .finally(() => { this.starting = null; });
     return this.starting;
   }
 
   /** 设置变了（模型 / 搜索 / 生图开关）需要重启进程时调用。 */
-  restart() { this.server?.kill(); this.server = null; }
+  restart() { if (this.server) this.server.killedByUs = true; this.server?.kill(); this.server = null; }
 
   forget(chatKey) { delete this.threads[chatKey]; this.#save(); }
+
+  /** 面板「立即启动」：不等下一条消息，现在就把常驻进程拉起来。 */
+  async warmup() { await this.#ensure(); return this.status(); }
+
+  /** 记一次「大脑没接住，退回 qq-agent 配置的模型」。 */
+  noteFailure(error) {
+    this.proc.failures += 1;
+    this.proc.lastError = String(error?.message ?? error).slice(0, 300);
+    this.#recordUsage(null, 'failures');
+  }
 
   /**
    * 正在想、还没开口时又来了新消息：直接追加进这一轮（turn/steer），不另起一轮。
@@ -333,6 +424,8 @@ export class CodexBrain {
       this.server.respond(m.id, { decision: 'denied' });
       return;
     }
+    // 用量单独处理：不管这一轮还在不在都要记（见 #onUsage）
+    if (m.method === 'thread/tokenUsage/updated') { this.#onUsage(p); return; }
     const run = p.threadId ? this.byThread.get(p.threadId) : null;
     if (!run) return;
     // 别的（更早的）一轮迟到的事件不算到这一轮头上
@@ -347,13 +440,6 @@ export class CodexBrain {
         const t = [...(it.summary || []), ...(it.content || [])].map((x) => (typeof x === 'string' ? x : x?.text || '')).join('\n').trim();
         if (t) this.deps.onNative(run.sessionId, { name: 'Codex 的思考', args: {}, result: t });
       } else if (it.type === 'imageGeneration' && it.savedPath) run.generated.push(it.savedPath);
-    } else if (m.method === 'thread/tokenUsage/updated') {
-      const last = p.tokenUsage?.last || {};
-      run.usage.prompt += Number(last.inputTokens) || 0;
-      run.usage.cached += Number(last.cachedInputTokens) || 0;
-      run.usage.completion += Number(last.outputTokens) || 0;
-      const th = this.threads[run.chatKey];
-      if (th) th.lastInput = Number(last.inputTokens) || th.lastInput || 0;
     } else if (m.method === 'turn/completed') {
       const turn = p.turn || {};
       this.#push(run, { type: 'done', error: turn.status === 'failed' ? (turn.error?.message || 'Codex 这一轮失败了') : '' });
@@ -440,8 +526,13 @@ export class CodexBrain {
 
   #usage(run) {
     const u = run.usage;
-    const out = { prompt_tokens: u.prompt, completion_tokens: u.completion, total_tokens: u.prompt + u.completion, prompt_tokens_details: { cached_tokens: u.cached } };
-    run.usage = { prompt: 0, cached: 0, completion: 0 };
+    // completion 是 Codex 报的 outputTokens，已经包含思考 token；reasoning 单列出来给会话页看
+    const out = {
+      prompt_tokens: u.prompt, completion_tokens: u.completion, total_tokens: u.prompt + u.completion,
+      prompt_tokens_details: { cached_tokens: u.cached },
+      completion_tokens_details: { reasoning_tokens: u.reasoning || 0 }
+    };
+    run.usage = zeroUsage();
     return out;
   }
 
@@ -501,6 +592,7 @@ export class CodexBrain {
     // 新一轮 1 秒就"结束"、一句没回（群里几个人接连 @ 时后面的人就没人理）
     let th = this.threads[chatKey];
     if (th && this.byThread.has(th.id)) await this.#settle(this.byThread.get(th.id));
+    const prevThreadId = th?.id || '';
 
     const why = !th ? '新会话'
       : names.some((n) => !th.tools.includes(n)) ? '工具变了'
@@ -549,7 +641,7 @@ export class CodexBrain {
 
     const run = {
       sessionId: ctx.sessionId, chatKey, threadId: th.id, turnId: '', pending: new Map(), events: [], waiter: null,
-      done: false, finalText: '', usage: { prompt: 0, cached: 0, completion: 0 }, generated: [], calledAny: false,
+      done: false, finalText: '', usage: this.#takeCarry(prevThreadId, th.id), generated: [], calledAny: false,
       inputChars: input[0].text.length, startedAt: Date.now()
     };
     this.runs.set(ctx.sessionId, run);
@@ -568,6 +660,7 @@ export class CodexBrain {
         summary: 'concise'
       });
       run.turnId = r.turn?.id || '';
+      this.#recordUsage(null, 'turns');
       // turn/start 回来之前这一轮就结束了（极少见）：那条 turn/completed 是自己的才算
       const early = run.earlyDone;
       if (early && (!early.id || early.id === run.turnId)) this.#push(run, { type: 'done', error: early.status === 'failed' ? (early.error?.message || 'Codex 这一轮失败了') : '' });
@@ -620,7 +713,29 @@ export class CodexBrain {
   }
 
   status() {
-    return { alive: Boolean(this.server?.alive), threads: Object.keys(this.threads).length, running: this.runs.size };
+    const s = this.deps.settings();
+    const sum = (days) => days.reduce((acc, k) => {
+      const r = this.usageLog.days[k];
+      if (r) for (const f of Object.keys(acc)) acc[f] += r[f] || 0;
+      return acc;
+    }, { turns: 0, prompt: 0, cached: 0, completion: 0, reasoning: 0, failures: 0 });
+    return {
+      alive: Boolean(this.server?.alive),
+      starting: Boolean(this.starting),
+      pid: this.server?.child?.pid ?? null,
+      startedAt: this.server?.alive ? this.proc.startedAt : null,
+      starts: this.proc.starts,
+      lastExit: this.proc.lastExit,
+      lastError: this.proc.lastError,
+      failures: this.proc.failures,
+      rolloverTokens: s.brainRolloverTokens,
+      threads: Object.entries(this.threads).map(([chatKey, th]) => ({
+        chatKey, id: th?.id || '', model: th?.model || '', lastInput: th?.lastInput || 0, at: th?.at || 0,
+        busy: Boolean(th?.id && this.byThread.has(th.id))
+      })).sort((a, b) => b.at - a.at),
+      running: [...this.runs.values()].map((r) => ({ sessionId: r.sessionId, chatKey: r.chatKey, startedAt: r.startedAt, sentAny: Boolean(r.sentAny) })),
+      usage: { today: sum([localDay(0)]), last7: sum([0, 1, 2, 3, 4, 5, 6].map(localDay)), byDay: this.usageLog.days }
+    };
   }
 }
 

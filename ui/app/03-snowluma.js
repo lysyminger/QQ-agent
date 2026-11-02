@@ -76,6 +76,11 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
     const qqReady = !!qq.ready;
     const qqRunning = !!qq.running;
     const qqPid = qq.pid ?? null;
+    // SnowLuma 实际挂着的 QQ：多数时候是用户自己装的 QQ，不是便携 QQ
+    const hooked = qq.hooked || null;
+    const ownQq = qq.ownQq || null;
+    const usingOwnQq = Boolean(hooked && !hooked.portable) || (!qqRunning && Boolean(ownQq));
+    const qqAlive = qqRunning || Boolean(hooked) || Boolean(ownQq);
     const logText = (logs.logs || []).map((l) => {
       const t = new Date(l.at).toLocaleTimeString('zh-CN', { hour12: false });
       return `[${t}]${l.stream === 'stderr' ? ' ⚠' : ''} ${l.text}`;
@@ -113,13 +118,13 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
         <div class="quick-start-section" style="background:var(--bg);border:none;border-radius:14px;padding:16px;margin-bottom:16px;box-shadow:var(--raise-sm)">
           <div style="font-size:15px;font-weight:600;margin-bottom:8px">🚀 快速启动</div>
           <div class="muted" style="font-size:13px;margin-bottom:12px;line-height:1.6">
-            ${!qqReady ? '便携 QQ 未安装，请先运行 <code>npm run setup</code>' :
-              !qqRunning ? '点击下面按钮，自动完成：启动 QQ → 启动 SnowLuma → 连接 OneBot' :
-              !running ? 'QQ 已运行，点击启动 SnowLuma 并连接' :
-              'SnowLuma 已运行，等待 OneBot 连接…'}
+            ${qqAlive ? (!running ? 'QQ 已在运行，点击启动 SnowLuma 并连接' : 'SnowLuma 已运行，等待 OneBot 连接…（QQ 要登录机器人账号，SnowLuma 才能挂上）') :
+              !qqReady ? '便携 QQ 未安装，请先运行 <code>npm run setup</code>，或者先打开你自己装的 QQ 并登录机器人账号' :
+              '点击下面按钮，自动完成：启动便携 QQ → 启动 SnowLuma → 连接 OneBot（也可以先打开你自己装的 QQ）'}
           </div>
-          <button class="btn btn-primary" id="quick-start-btn" style="font-size:14px;padding:10px 20px" ${!qqReady ? 'disabled' : ''}>
-            ${!qqReady ? '请先运行 npm run setup' :
+          <button class="btn btn-primary" id="quick-start-btn" style="font-size:14px;padding:10px 20px" ${!qqReady && !qqAlive ? 'disabled' : ''}>
+            ${qqAlive ? (!running ? '启动 SnowLuma' : '等待连接…') :
+              !qqReady ? '请先运行 npm run setup' :
               !qqRunning ? '一键启动（QQ + SnowLuma）' :
               !running ? '启动 SnowLuma' :
               '等待连接…'}
@@ -127,20 +132,29 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
           <span id="quick-start-hint" class="muted" style="font-size:12px;margin-left:12px"></span>
         </div>` : ''}
 
-        <!-- 便携 QQ 内核状态 -->
+        <!-- QQ 内核：SnowLuma 挂在哪个 QQ 上（用户自己装的 QQ，或项目自带的便携 QQ） -->
         <div class="snowluma-qq-section">
           <div class="snowluma-state-row">
-            <span class="dot ${qqRunning ? 'dot-on' : 'dot-off'}"></span>
-            <span>QQ 内核：<strong>${qqRunning ? `运行中${qqPid ? `（pid ${qqPid}）` : ''}` : (qqReady ? '未启动' : '未安装')}</strong></span>
-            ${!qqReady ? '<span class="muted" style="color:var(--orange)">请先运行 npm run setup</span>' : ''}
+            <span class="dot ${qqAlive ? 'dot-on' : 'dot-off'}"></span>
+            <span>QQ 内核：<strong>${
+              hooked ? (hooked.portable ? `便携 QQ 运行中（pid ${hooked.pid}）` : `你自己的 QQ（pid ${hooked.pid}）`)
+                : qqRunning ? `便携 QQ 运行中${qqPid ? `（pid ${qqPid}）` : ''}`
+                  : ownQq ? `你自己的 QQ 在运行（pid ${ownQq.pid}）`
+                    : (qqReady ? '没有 QQ 在运行' : '没有 QQ 在运行（便携 QQ 未安装）')
+            }</strong></span>
+            ${hooked ? `<span class="muted">SnowLuma 已挂上 · 账号 ${esc(String(hooked.uin))}</span>`
+              : (qqAlive ? '<span class="muted">SnowLuma 还没挂上它（QQ 登录机器人账号后会自动挂上）</span>' : '')}
           </div>
-          ${qqReady ? `
           <div class="snowluma-state-row muted" style="font-size:12px">
-            <span>目录：${esc(qq.dir || '')}</span>
+            <span>${hooked || ownQq ? `程序：${esc((hooked || ownQq).path || '')}` : (qqReady ? `便携 QQ 目录：${esc(qq.dir || '')}` : '')}</span>
+          </div>
+          ${usingOwnQq ? `
+          <div class="snowluma-state-row muted" style="font-size:12px">
+            <span>正在用你自己装的 QQ，不需要再启动便携 QQ。下面两个按钮只管项目自带的便携 QQ，不会动你自己的 QQ。</span>
           </div>` : ''}
           <div class="snowluma-actions">
-            <button class="btn btn-small" id="qq-start-btn" ${!qqReady || qqRunning ? 'disabled' : ''}>${qqRunning ? '已运行' : '单独启动 QQ'}</button>
-            <button class="btn btn-small btn-danger" id="qq-stop-btn" ${!qqRunning ? 'disabled' : ''}>关闭 QQ</button>
+            <button class="btn btn-small" id="qq-start-btn" ${!qqReady || qqRunning || usingOwnQq ? 'disabled' : ''} title="启动项目自带的便携 QQ（和你日常用的 QQ 隔离）">${qqRunning ? '便携 QQ 已运行' : '启动便携 QQ'}</button>
+            <button class="btn btn-small btn-danger" id="qq-stop-btn" ${!qqRunning ? 'disabled' : ''}>关闭便携 QQ</button>
             <span id="qq-hint" class="muted" style="font-size:12px"></span>
           </div>
           ${qqLogText !== '暂无日志' ? `
@@ -165,6 +179,28 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
             <span>OneBot：<strong>${onebotConnected ? `已连接${s.onebot.self ? `（${s.onebot.self.nickname}）` : ''}` : '未连接'}</strong></span>
             <span class="muted">WS ${s.onebot?.error ? `：${s.onebot.error}` : ''}</span>
           </div>
+          ${(() => {
+            const wd = s.snowluma?.watchdog || {};
+            const bf = s.snowluma?.backfill || {};
+            const ago = (t) => (t ? new Date(t).toLocaleString('zh-CN', { hour12: false }) : '—');
+            const exit = wd.lastExit;
+            return `
+          <div class="snowluma-state-row">
+            <span class="dot ${wd.enabled ? 'dot-on' : 'dot-off'}"></span>
+            <span>看门狗：<strong>${wd.enabled ? (wd.restartPending ? '准备重启…' : '守护中') : '未启用'}</strong></span>
+            <span class="muted">${wd.enabled ? `SnowLuma 意外退出会自动拉起 · 30 分钟内已重启 ${wd.restartsLast30Min || 0} 次` : '只守护由 QQ Agent 拉起的 SnowLuma'}</span>
+          </div>
+          ${exit ? `<div class="snowluma-state-row muted" style="font-size:12px">
+            <span>上次退出：${ago(exit.at)}（code=${esc(String(exit.code ?? ''))}${exit.signal ? ` signal=${esc(exit.signal)}` : ''}，运行了 ${exit.uptimeSec ?? '?'} 秒）· 详情见 data/logs/snowluma-exit.log</span>
+          </div>` : ''}
+          <div class="snowluma-state-row">
+            <span class="dot ${bf.running ? 'dot-on' : (bf.lastAt ? 'dot-on' : 'dot-off')}"></span>
+            <span>断线补拉：<strong>${bf.running ? '补拉中…' : (bf.lastAt ? '已完成' : '还没跑过')}</strong></span>
+            <span class="muted">上次断开 ${ago(bf.lastDisconnectAt)} · 上次补拉 ${ago(bf.lastAt)}</span>
+            <button class="btn btn-small" id="sl-backfill-btn" ${onebotConnected && !bf.running ? '' : 'disabled'}>立即补拉</button>
+          </div>
+          ${bf.lastSummary ? `<div class="snowluma-state-row muted" style="font-size:12px"><span>${esc(bf.lastSummary)}</span></div>` : ''}`;
+          })()}
           <div class="snowluma-state-row muted">
             <span>目录：${esc(dir || '（未找到项目内 snowluma/ 文件夹）')}</span>
           </div>
@@ -236,8 +272,8 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
       hint.textContent = '';
 
       try {
-        // 步骤 1：启动便携 QQ（如果未运行）
-        if (!qqRunning) {
+        // 步骤 1：启动便携 QQ（如果未运行；用户自己的 QQ 已经开着就跳过）
+        if (!qqAlive) {
           btn.textContent = '启动 QQ 中…';
           hint.textContent = '请在弹出的 QQ 窗口扫码登录';
           const r = await api('/api/qq-portable/launch', { method: 'POST', body: '{}' });
@@ -342,6 +378,18 @@ async function loadSnowlumaPage({ quiet = false } = {}) {
       setTimeout(() => loadSnowlumaPage({ quiet: true }), 1500);
     });
     $('#sl-refresh-btn').addEventListener('click', () => loadSnowlumaPage());
+    $('#sl-backfill-btn')?.addEventListener('click', async () => {
+      const btn = $('#sl-backfill-btn');
+      btn.disabled = true;
+      $('#sl-hint').textContent = '正在补拉…';
+      try {
+        const r = await api('/api/snowluma/backfill', { method: 'POST' });
+        $('#sl-hint').textContent = r.backfill?.lastSummary || '补拉完成';
+      } catch (e) {
+        $('#sl-hint').textContent = `补拉失败：${e.message}`;
+      }
+      loadSnowlumaPage({ quiet: true });
+    });
     $('#sl-open-folder-btn').addEventListener('click', async () => {
       try { await api('/api/snowluma/open-folder', { method: 'POST', body: '{}' }); }
       catch (e) { $('#sl-hint').textContent = `失败：${e.message}`; }

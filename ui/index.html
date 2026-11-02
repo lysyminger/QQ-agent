@@ -77,6 +77,7 @@
     <button class="tab" data-tab="skills">技能</button>
     <button class="tab" data-tab="plugins">插件</button>
     <button class="tab" data-tab="snowluma">SnowLuma</button>
+    <button class="tab" data-tab="codex">Codex</button>
     <button class="tab" data-tab="settings">设置</button>
     <!-- 社区功能（右侧）：金句上传 / 意见收集。金句勾选模式下「确认金句」出现在最左 -->
     <span class="nav-spacer"></span>
@@ -118,6 +119,11 @@
     <!-- SnowLuma 视图 -->
     <section id="view-snowluma" class="view">
       <div id="snowluma-page" class="snowluma-pane"></div>
+    </section>
+
+    <!-- Codex 视图：Codex 大脑的进程 / 对话 / 用量 -->
+    <section id="view-codex" class="view">
+      <div id="codex-page" class="snowluma-pane"></div>
     </section>
 
     <!-- 记忆视图 -->
@@ -171,6 +177,7 @@
   <script defer src="/app/09-community.js"></script>
   <script defer src="/app/10-feedback.js"></script>
   <script defer src="/app/12-concept2-ui.js"></script>
+  <script defer src="/app/13-codex.js"></script>
   <script defer src="/app/11-init.js"></script>
 
   <!-- 阿里云验证码 2.0（意见收集/金句上传共用）：容器常驻；AliyunCaptchaConfig 与

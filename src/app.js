@@ -222,16 +222,105 @@ export function createApp({ log = console.log } = {}) {
   let pluginWatcher = null;        // 开发模式热重载 watcher（stop() 时要 close，否则句柄泄漏）
   let obPortPollTimer = null;      // OneBot WS 端口就绪轮询（stop() 时要 clear，start() 里赋值）
 
+  // SnowLuma 当前挂着的 QQ 进程（它的日志里有 "[Hook] login detected: PID=… UIN=…"）。
+  // 面板靠它认出"用的是你自己装的 QQ"，不再只盯着项目自带的便携 QQ 报"未启动"。
+  let snowlumaHook = null;   // { pid, uin, closed }
+
+  function noteSnowlumaHook(text) {
+    const m = /login detected: PID=(\d+) UIN=(\d+)/.exec(text);
+    if (m) snowlumaHook = { pid: Number(m[1]), uin: m[2], closed: false };
+    else if (snowlumaHook && /\[OneBot\] session closed/.test(text)) snowlumaHook.closed = true;
+  }
+
+  /** SnowLuma 不是本实例拉起的（内存里没有它的输出）：从它最新的日志文件尾部找一次。 */
+  function snowlumaHookFromLogFile() {
+    try {
+      const dir = path.join(String(snowlumaDir() || ''), 'logs');
+      const file = fs.readdirSync(dir).filter((f) => /^snowluma-.*\.log$/.test(f)).sort().pop();
+      if (!file) return null;
+      const full = path.join(dir, file);
+      const size = fs.statSync(full).size;
+      const len = Math.min(size, 256 * 1024);
+      const buf = Buffer.alloc(len);
+      const fd = fs.openSync(full, 'r');
+      try { fs.readSync(fd, buf, 0, len, size - len); } finally { fs.closeSync(fd); }
+      let hook = null;
+      for (const line of buf.toString('utf8').split(/\r?\n/)) {
+        const m = /login detected: PID=(\d+) UIN=(\d+)/.exec(line);
+        if (m) hook = { pid: Number(m[1]), uin: m[2], closed: false };
+        else if (hook && /\[OneBot\] session closed/.test(line)) hook.closed = true;
+      }
+      return hook;
+    } catch { return null; }
+  }
+
   function pushSnowlumaLog(text, stream = 'stdout') {
     const line = { at: Date.now(), stream, text: String(text ?? '').replace(/\r?\n$/, '') };
     if (!line.text) return;
+    noteSnowlumaHook(line.text);
     snowlumaLogs.push(line);
     if (snowlumaLogs.length > 500) snowlumaLogs.splice(0, snowlumaLogs.length - 500);
     emit('snowluma-log', line);
   }
 
+  // ── SnowLuma 看门狗 ──────────────────────────────────────────────────────
+  // SnowLuma 进程会自己挂掉（2026-10-29：17:22 发 B站视频上传 mp4 时整个进程退出，
+  // 日志里没有任何报错），以前退出后只记一行内存日志，没人去拉，机器人一断就是几个小时。
+  // 现在：本实例拉起过它（wanted）又不是我们主动停的，退出后按退避自动重启；
+  // 每次退出把退出码和最后几十行输出写进 data/logs/snowluma-exit.log，下次好查原因。
+  const SNOWLUMA_RESTART_DELAYS = [3000, 10000, 30000, 60000, 120000, 300000];
+  const snowlumaWatch = { wanted: false, restarts: [], lastExit: null, timer: null, lastStartAt: 0 };
+
+  function recordSnowlumaExit(code, signal) {
+    const at = Date.now();
+    const uptimeSec = snowlumaWatch.lastStartAt ? Math.round((at - snowlumaWatch.lastStartAt) / 1000) : null;
+    snowlumaWatch.lastExit = { at, code: code ?? null, signal: signal ?? null, uptimeSec };
+    try {
+      const dir = path.join(DATA_DIR, 'logs');
+      fs.mkdirSync(dir, { recursive: true });
+      const tail = snowlumaLogs.slice(-40).map((l) => `  ${new Date(l.at).toLocaleTimeString('zh-CN', { hour12: false })} [${l.stream}] ${l.text}`).join('\n');
+      fs.appendFileSync(path.join(dir, 'snowluma-exit.log'),
+        `[${new Date(at).toLocaleString('zh-CN', { hour12: false })}] SnowLuma 退出 code=${code ?? ''} signal=${signal ?? ''} 运行了 ${uptimeSec ?? '?'} 秒\n${tail}\n\n`, 'utf8');
+    } catch { /* 写不了日志不影响重启 */ }
+  }
+
+  function scheduleSnowlumaRestart() {
+    if (!snowlumaWatch.wanted || snowlumaStopping || snowlumaWatch.timer) return;
+    if (getConfig().snowluma?.autoRestart === false) return;
+    const now = Date.now();
+    // 稳定跑满 30 分钟后的退出当成新一轮，从最短间隔重新算
+    snowlumaWatch.restarts = snowlumaWatch.restarts.filter((t) => now - t < 30 * 60 * 1000);
+    const delay = SNOWLUMA_RESTART_DELAYS[Math.min(snowlumaWatch.restarts.length, SNOWLUMA_RESTART_DELAYS.length - 1)];
+    pushSnowlumaLog(`看门狗：${Math.round(delay / 1000)} 秒后自动重启 SnowLuma（30 分钟内第 ${snowlumaWatch.restarts.length + 1} 次）`, 'stdout');
+    log(`[snowluma] 进程退出，${Math.round(delay / 1000)} 秒后自动重启`);
+    snowlumaWatch.timer = setTimeout(async () => {
+      snowlumaWatch.timer = null;
+      if (!snowlumaWatch.wanted || snowlumaStopping) return;
+      snowlumaWatch.restarts.push(Date.now());
+      try {
+        const r = await launchSnowluma();
+        if (!r.ok) { pushSnowlumaLog(`看门狗重启失败：${r.error || '原因未知'}`, 'stderr'); scheduleSnowlumaRestart(); }
+      } catch (error) {
+        pushSnowlumaLog(`看门狗重启失败：${error?.message ?? error}`, 'stderr');
+        scheduleSnowlumaRestart();
+      }
+    }, delay);
+    snowlumaWatch.timer.unref?.();
+  }
+
   function snowlumaStatus() {
-    return { embedded: !!snowlumaProc, pid: snowlumaProc?.pid ?? null };
+    return {
+      embedded: !!snowlumaProc,
+      pid: snowlumaProc?.pid ?? null,
+      watchdog: {
+        enabled: snowlumaWatch.wanted && getConfig().snowluma?.autoRestart !== false,
+        restartsLast30Min: snowlumaWatch.restarts.filter((t) => Date.now() - t < 30 * 60 * 1000).length,
+        restartPending: !!snowlumaWatch.timer,
+        lastExit: snowlumaWatch.lastExit,
+        startedAt: snowlumaWatch.lastStartAt || null
+      },
+      backfill: backfillState
+    };
   }
 
   /** 关闭 SnowLuma。内置拉起的直接 kill；外部启动的（launcher.bat / 手动 node）按
@@ -239,6 +328,9 @@ export function createApp({ log = console.log } = {}) {
    *  对外启动实例毫无作用，用户只能去任务管理器，而残留实例会继续抢占管道与端口。
    *  返回是否执行了关闭动作。 */
   async function stopSnowluma() {
+    // 主动停：看门狗不再拉起
+    snowlumaWatch.wanted = false;
+    if (snowlumaWatch.timer) { clearTimeout(snowlumaWatch.timer); snowlumaWatch.timer = null; }
     const proc = snowlumaProc;
     if (proc) {
       try {
@@ -370,6 +462,14 @@ export function createApp({ log = console.log } = {}) {
   // 进程查询（PowerShell Get-CimInstance）可达数秒；SnowLuma 页/SSE/轮询会反复打
   // /api/status，每次都查一遍会把整页拖死。结果缓存 3 秒。
   let qqPidCache = { at: 0, pid: undefined };
+  let qqProcsCache = { at: 0, list: null };
+  async function cachedQqProcesses() {
+    if (qqProcsCache.list && Date.now() - qqProcsCache.at < 3000) return qqProcsCache.list;
+    const list = await listQqProcesses();
+    qqProcsCache = { at: Date.now(), list };
+    return list;
+  }
+
   async function qqPortableRunningPid() {
     // 1) 本进程拉起过的那个：spawn 时就拿到 pid 了，不用查系统 ——
     //    最快，也不受任何编码/权限问题影响。
@@ -386,7 +486,7 @@ export function createApp({ log = console.log } = {}) {
     }
     // 2) 查系统：覆盖"上次启动的 QQ 还在跑，但应用重启过"的情况
     const portableDir = qqPortableDir().toLowerCase();
-    const procs = await listQqProcesses();
+    const procs = await cachedQqProcesses();
     const match = procs.find((p) => p.path.toLowerCase().startsWith(portableDir));
     const pid = match?.pid ?? null;
     qqPidCache = { at: Date.now(), pid };
@@ -488,12 +588,26 @@ export function createApp({ log = console.log } = {}) {
   /** 便携 QQ 状态摘要 */
   async function qqPortableStatus() {
     const pid = await qqPortableRunningPid();
+    // SnowLuma 实际挂着的 QQ：可能是便携 QQ，也可能是用户自己装的 QQ（最常见）
+    const portableDir = qqPortableDir().toLowerCase();
+    const procs = await cachedQqProcesses();
+    const hook = snowlumaHook || (snowlumaHook = snowlumaHookFromLogFile());
+    const hookedProc = hook && !hook.closed ? procs.find((p) => p.pid === hook.pid) : null;
+    const own = procs.find((p) => p.path && !p.path.toLowerCase().startsWith(portableDir));
     return {
       ready: qqPortableReady(),
       running: pid !== null,
       pid,
       dir: qqPortableDir(),
-      dataDir: qqPortableDataDir()
+      dataDir: qqPortableDataDir(),
+      hooked: hookedProc ? {
+        pid: hookedProc.pid,
+        path: hookedProc.path,
+        uin: hook.uin,
+        portable: hookedProc.path.toLowerCase().startsWith(portableDir)
+      } : null,
+      // 没挂上时也告诉面板：本机有没有在跑用户自己装的 QQ
+      ownQq: own ? { pid: own.pid, path: own.path } : null
     };
   }
 
@@ -542,6 +656,8 @@ export function createApp({ log = console.log } = {}) {
             detached: false
           });
           snowlumaProc = child;
+          snowlumaWatch.wanted = true;
+          snowlumaWatch.lastStartAt = Date.now();
           child.unref();
           pushSnowlumaLog(`SnowLuma 启动中（内置模式，pid=${child.pid}）…`, 'stdout');
           child.stdout.on('data', (d) => {
@@ -555,9 +671,11 @@ export function createApp({ log = console.log } = {}) {
             }
           });
           child.on('exit', (code, signal) => {
-            snowlumaProc = null;
+            if (snowlumaProc === child) snowlumaProc = null;
             pushSnowlumaLog(`SnowLuma 进程已退出（code=${code ?? ''} signal=${signal ?? ''}）`, 'stderr');
+            recordSnowlumaExit(code, signal);
             emit('snowluma-status', { running: false, embedded: false, pid: null });
+            scheduleSnowlumaRestart();
           });
           child.on('error', (error) => {
             pushSnowlumaLog(`SnowLuma 启动失败：${error?.message ?? error}`, 'stderr');
@@ -663,8 +781,138 @@ export function createApp({ log = console.log } = {}) {
   const communitySyncTimer = startCommunitySync(log);
   communitySyncTimer.unref?.();
 
+  // ── 断点与断线补拉 ──────────────────────────────────────────────────────
+  // 断开时记下断点（data/onebot-checkpoint.json）并把会话索引落盘；重新连上后，
+  // 对白名单里的每个群 / 私聊用 get_*_msg_history 拉最近的消息，存档里没有的补进去。
+  // 补进来的旧消息只当背景（已读），只有 replyWindowMin 分钟内 @ 了机器人的才会触发回复。
+  // 配置 config.backfill = { enabled, count, maxHours, replyWindowMin }，都有默认值。
+  const CHECKPOINT_FILE = path.join(DATA_DIR, 'onebot-checkpoint.json');
+  const backfillState = { running: false, lastAt: null, lastSummary: '', lastDisconnectAt: null, lastConnectAt: null };
+  let backfillTimer = null;
+  let obWasConnected = false;
+  try {
+    const cp = JSON.parse(fs.readFileSync(CHECKPOINT_FILE, 'utf8'));
+    backfillState.lastDisconnectAt = cp.lastDisconnectAt ?? null;
+    backfillState.lastAt = cp.lastBackfillAt ?? null;
+    backfillState.lastSummary = cp.lastSummary ?? '';
+  } catch { /* 第一次运行 */ }
+
+  function saveCheckpoint() {
+    try {
+      fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify({
+        lastDisconnectAt: backfillState.lastDisconnectAt,
+        lastConnectAt: backfillState.lastConnectAt,
+        lastBackfillAt: backfillState.lastAt,
+        lastSummary: backfillState.lastSummary
+      }, null, 1), 'utf8');
+    } catch { /* 写不了断点不影响补拉（补拉按存档里最后一条消息的时间算） */ }
+  }
+
+  function scheduleBackfill(delayMs = 4000) {
+    if (backfillTimer) clearTimeout(backfillTimer);
+    // 等几秒：刚连上时 get_login_info 可能还没回来，selfId 为空会把自己的消息当成别人的
+    backfillTimer = setTimeout(() => {
+      backfillTimer = null;
+      runBackfill().catch((error) => log(`[补拉] 出错：${error?.message ?? error}`));
+    }, delayMs);
+    backfillTimer.unref?.();
+  }
+
+  async function runBackfill() {
+    const cfgNow = getConfig();
+    const bf = cfgNow.backfill || {};
+    if (bf.enabled === false || backfillState.running || !onebot.connected) return;
+    backfillState.running = true;
+    const count = Math.min(100, Math.max(10, Number(bf.count) || 50));
+    const maxAgeMs = Math.max(1, Number(bf.maxHours) || 12) * 3600_000;
+    const replyWindowMs = Math.max(0, Number(bf.replyWindowMin ?? 10)) * 60_000;
+    const listOf = (kind) => (cfgNow.allow?.[kind] ?? cfgNow.allow?.[`${kind}s`] ?? []).map(String);
+    const targets = [
+      ...listOf('group').map((id) => ['group', id]),
+      ...listOf('private').map((id) => ['private', id])
+    ].filter(([kind, id]) => allowed(kind, id, cfgNow));
+    let total = 0;
+    let woke = 0;
+    const parts = [];
+    const failed = [];
+    try {
+      for (const [kind, id] of targets) {
+        if (!onebot.connected) break;
+        const chatKey = `${kind}:${id}`;
+        let list = [];
+        try {
+          const r = kind === 'group'
+            ? await onebot.call('get_group_msg_history', { group_id: Number(id), count })
+            : await onebot.call('get_friend_msg_history', { user_id: Number(id), count });
+          list = Array.isArray(r?.messages) ? r.messages : [];
+        } catch (error) {
+          failed.push(chatKey);
+          log(`[补拉] ${chatKey} 拉历史失败：${error?.message ?? error}`);
+          continue;
+        }
+        const stored = store.recent(chatKey, { limit: 300 });
+        const lastTs = stored.length ? stored[stored.length - 1].ts : 0;
+        const since = Math.max(Date.now() - maxAgeMs, lastTs - 60_000);
+        // 去重两道：消息号相同；或者同一个人、同一秒发的（防历史接口的消息号和实时推送不一致）
+        const known = (ev) => {
+          if (store.findByMid(chatKey, ev.message_id)) return true;
+          const who = String(ev.user_id ?? ev.sender?.user_id ?? '');
+          const t = Number(ev.time) * 1000;
+          return stored.some((m) => String(m.senderId) === who && Math.abs(m.ts - t) < 1500);
+        };
+        const fresh = list
+          .filter((ev) => ev && ev.message_id != null && Number(ev.time) * 1000 > since && !known(ev))
+          .sort((a, b) => Number(a.time) - Number(b.time));
+        let n = 0;
+        for (const ev of fresh) {
+          const event = {
+            ...ev,
+            post_type: 'message',
+            message_type: kind,
+            ...(kind === 'group' ? { group_id: Number(id) } : {}),
+            user_id: ev.user_id ?? ev.sender?.user_id
+          };
+          try {
+            if (onebot.selfId && String(event.user_id ?? '') === onebot.selfId) {
+              if (kind === 'group') { await recordSelfEcho(event, { waitMs: 0 }); n++; }
+              continue;
+            }
+            const r = await ingestMessage(kind, id, event, { backfill: true, replyWindowMs });
+            if (r) { n++; if (r.woke) woke++; }
+          } catch (error) {
+            log(`[补拉] ${chatKey} #${ev.message_id} 入库失败：${error?.message ?? error}`);
+          }
+        }
+        if (n) { parts.push(`${chatKey} ${n} 条`); total += n; }
+      }
+    } finally {
+      backfillState.running = false;
+      backfillState.lastAt = Date.now();
+      backfillState.lastSummary = total
+        ? `补回 ${total} 条（${parts.join('，')}）${woke ? `，其中 ${woke} 条 @ 了机器人、已交给它回复` : ''}`
+        : `没有漏掉的消息（查了 ${targets.length - failed.length} 个聊天）`;
+      if (failed.length) backfillState.lastSummary += `；${failed.length} 个聊天拉取失败`;
+      saveCheckpoint();
+      log(`[补拉] ${backfillState.lastSummary}`);
+      emit('snowluma-status', { backfill: backfillState });
+    }
+  }
+
   // OneBot 连接状态推送
-  onebot.onStatus((status) => emit('onebot-status', status));
+  onebot.onStatus((status) => {
+    emit('onebot-status', status);
+    if (status.connected && !obWasConnected) {
+      obWasConnected = true;
+      backfillState.lastConnectAt = Date.now();
+      scheduleBackfill();
+    } else if (!status.connected && obWasConnected) {
+      obWasConnected = false;
+      backfillState.lastDisconnectAt = Date.now();
+      saveCheckpoint();
+      try { sessions.flushIndexCache(); } catch { /* ignore */ }
+      log('[onebot] 连接断开：已记下断点，重连后自动补拉断线期间的消息');
+    }
+  });
 
   // ── 从 SnowLuma 配置自动同步 OneBot 令牌 ──
   // SnowLuma 给每个登录过的账号生成独立随机 token（config/onebot_<uin>.json），
@@ -856,7 +1104,7 @@ export function createApp({ log = console.log } = {}) {
     }
   }
 
-  async function ingestMessage(kind, id, event) {
+  async function ingestMessage(kind, id, event, { backfill = false, replyWindowMs = 0 } = {}) {
     const cfgNow = getConfig();
     const senderId = String(event.sender?.user_id ?? event.user_id ?? '');
     // 白名单外的聊天完全不记录（主人本人的消息除外）
@@ -950,7 +1198,7 @@ export function createApp({ log = console.log } = {}) {
 
     // ── 指令禁言：群内任何人 @机器人 + 发送指定指令 → 该群暂时固定 1 档（仅艾特）──
     // 在存档前处理：指令本身也要留档（让机器人知道被禁言了），但先设置禁言状态。
-    if (kind === 'group') {
+    if (kind === 'group' && !backfill) {
       maybeTriggerCommandMute(id, text, event, atMe);
     }
 
@@ -965,6 +1213,14 @@ export function createApp({ log = console.log } = {}) {
       atNames
     });
     emit('chat-update', `${kind}:${id}`);
+    // 断线补拉的旧消息：默认只当背景（直接标已读），免得机器人去回几个小时前的话；
+    // 只有补拉窗口内 @ 了它的才照常交给编排器
+    if (backfill) {
+      const woke = Boolean(atMe) && Date.now() - entry.ts <= replyWindowMs;
+      if (woke) orchestrator.onIncoming(`${kind}:${id}`, entry);
+      else store.markEntryRead(`${kind}:${id}`, entry.id);
+      return { entry, woke };
+    }
     // 逐条触发判定：把刚入库的条目交给编排器（entry 让它能精确标这一条已读）
     orchestrator.onIncoming(`${kind}:${id}`, entry);
 
@@ -1091,7 +1347,7 @@ export function createApp({ log = console.log } = {}) {
 
   // 机器人号自己发的消息回显：sender 发的会在拿到 message_id 后立刻留档，所以等几秒再看库里有没有这个 id，
   // 没有就是外部发的，补记成自己说的话（已读、不触发回复）
-  async function recordSelfEcho(event) {
+  async function recordSelfEcho(event, { waitMs = 4000 } = {}) {
     const isGroup = event.message_type === 'group' && event.group_id != null;
     const id = String(isGroup ? event.group_id : (event.target_id ?? event.user_id ?? ''));
     if (!id || event.message_id == null || (!isGroup && event.message_type !== 'private')) return;
@@ -1099,7 +1355,7 @@ export function createApp({ log = console.log } = {}) {
     const kind = isGroup ? 'group' : 'private';
     if (!allowed(kind, id, getConfig())) return;
     const chatKey = `${kind}:${id}`;
-    await new Promise((r) => setTimeout(r, 4000));
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
     if (store.findByMid(chatKey, event.message_id)) return;
     try {
       const segments = Array.isArray(event.message) ? event.message : null;
@@ -1377,7 +1633,7 @@ export function createApp({ log = console.log } = {}) {
     sanitizeConfig, keyEndpointAllowed, sanitizeProvider,
     readBody, authorize,
     snowlumaDir, snowlumaWsPort, snowlumaWebuiUrl, snowlumaWebuiPort, snowlumaStatus, snowlumaLogs,
-    launchSnowluma, stopSnowluma,
+    launchSnowluma, stopSnowluma, runBackfill,
     qqPortableStatus, qqPortableLogs, launchPortableQQ, stopPortableQQ,
     visionScan, isPortOpen,
     buildUsageStats, buildUsageBreakdown,
@@ -1737,6 +1993,9 @@ export function createApp({ log = console.log } = {}) {
     // 内置启动的 SnowLuma：QQ Agent 退出时一并关掉，避免留一个无窗口的后台进程。
     // 注意：SnowLuma 退出时不一定能立刻把 config 落盘，但我们的 stop 不会再去读它，
     // 下次启动会读到完整文件。
+    snowlumaWatch.wanted = false;   // 退出时一并关掉的，看门狗别再拉起来
+    if (snowlumaWatch.timer) { clearTimeout(snowlumaWatch.timer); snowlumaWatch.timer = null; }
+    if (backfillTimer) { clearTimeout(backfillTimer); backfillTimer = null; }
     try { snowlumaProc?.kill(); } catch { /* ignore */ }
     // 便携 QQ：默认保留运行（避免误杀用户登录态），如需清理可在 UI 手动关闭
     // try { await stopPortableQQ(); } catch { /* ignore */ }
