@@ -59,3 +59,12 @@ test/reports/
 .claude/
 *.bak-*
 plugins/Pallas-Bot-source-*
+# 别人写的插件（无许可证，只在本机用，见 doc/本地改动说明.md）
+plugins/adaptive-group-style/
+plugins/burst-merge/
+plugins/inner-life/
+plugins/life-memory/
+plugins/live-context/
+plugins/meme-tracker/
+plugins/quote-reply/
+plugins/repeat-echo/
