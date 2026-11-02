@@ -137,6 +137,35 @@ async function loadCodexPage({ quiet = false } = {}) {
         </tbody>
       </table>
       ${running.length ? `<div class="hint" style="margin-top:8px">正在进行：${running.map((r) => `${esc(codexWhere(r.chatKey))}（${codexAgo(r.startedAt)}开始${r.sentAny ? '，已发言' : ''}）`).join('、')}</div>` : ''}
+
+      <hr class="sl-sep">
+
+      ${(() => {
+        const ws = st.workshop || {};
+        const building = ws.building;
+        const failed = (ws.recent || []).filter((j) => j.status === 'failed').slice(0, 3);
+        return `
+      <h3 class="usage-h3">自己写的工具（${(ws.tools || []).length}）</h3>
+      <div class="hint" style="margin-bottom:6px">
+        大脑缺能力时用 tool_request 让另一个 Codex 写新工具：静态检查 + 自测通过就自动上线（plugins/self-tools/tools/），上线后私聊告诉主人。
+        ${ws.enabled === false ? '<b>现在在设置里关掉了。</b>' : `每天最多 ${ws.dailyMax || 6} 个。`}删掉就下线。
+      </div>
+      ${building ? `<div class="snowluma-state-row"><span class="dot dot-on"></span><span>正在写：<strong>${esc(building.name || building.id)}</strong></span><span class="muted">${esc(building.stage || '')} · ${esc(codexAgo(building.at))}开始 · ${esc(building.byName || building.by || '')}提的</span></div>
+      <div class="snowluma-state-row muted" style="font-size:12px"><span>需求：${esc(building.need || '')}</span></div>` : ''}
+      <table class="usage-table" style="width:100%">
+        <thead><tr><th>工具</th><th>能做什么</th><th>谁提的</th><th>上线</th><th></th></tr></thead>
+        <tbody>
+          ${(ws.tools || []).map((t) => `<tr>
+            <td><strong>${esc(t.name)}</strong><br><code class="mcard-tool-id">${esc(t.id)}</code></td>
+            <td>${esc(t.summary || t.need || '')}</td>
+            <td>${esc(t.by || '—')}${t.chatKey ? `<br><span class="muted">${esc(codexWhere(t.chatKey))}</span>` : ''}</td>
+            <td>${codexAgo(t.at)}</td>
+            <td><button class="btn btn-small btn-danger codex-tool-del" data-id="${esc(t.id)}">删除</button></td>
+          </tr>`).join('') || '<tr><td colspan="5" class="muted">还没有自己写的工具</td></tr>'}
+        </tbody>
+      </table>
+      ${failed.length ? `<div class="hint" style="margin-top:8px">最近没写成：${failed.map((j) => `${esc(j.name || j.id)}（${esc(String(j.error || '').slice(0, 80))}）`).join('；')}</div>` : ''}`;
+      })()}
     </div>`;
 
   const hint = (t) => { const el = $('#codex-hint'); if (el) el.textContent = t; };
@@ -162,6 +191,13 @@ async function loadCodexPage({ quiet = false } = {}) {
     } catch (e) { hint(`重载失败：${e.message}`); }
     loadCodexPage({ quiet: true });
   });
+  for (const btn of box.querySelectorAll('.codex-tool-del')) {
+    btn.addEventListener('click', async () => {
+      const toolId = btn.dataset.id;
+      if (!(await uiConfirm(`删除自己写的工具 ${toolId}？删掉后热重载就下线，要用得让它重新写。`))) return;
+      control('remove-tool', { toolId }, '正在删除…');
+    });
+  }
   for (const btn of box.querySelectorAll('.codex-reset-btn')) {
     btn.addEventListener('click', async () => {
       const chatKey = btn.dataset.chat;

@@ -301,7 +301,7 @@ export function createRoutes(deps) {
         const p = skillManager.getCapabilityProviders('codex.control', {})[0];
         if (!p) return json(res, 409, { ok: false, error: 'codex-bridge 插件没有启用' });
         try {
-          const r = await p.fn({ action: String(body.action || ''), chatKey: body.chatKey ? String(body.chatKey) : '' });
+          const r = await p.fn({ action: String(body.action || ''), chatKey: body.chatKey ? String(body.chatKey) : '', toolId: body.toolId ? String(body.toolId) : '' });
           return json(res, r?.ok === false ? 400 : 200, r);
         } catch (error) {
           return json(res, 500, { ok: false, error: String(error?.message ?? error) });

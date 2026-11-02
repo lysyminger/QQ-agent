@@ -68,3 +68,5 @@ plugins/live-context/
 plugins/meme-tracker/
 plugins/quote-reply/
 plugins/repeat-echo/
+# 喵喵自己写的工具（工具工坊自动生成，只在本机用）
+plugins/self-tools/tools/

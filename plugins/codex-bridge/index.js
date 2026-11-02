@@ -43,6 +43,8 @@ const { REF_GET_TOOL, REF_SAVE_TOOL, drawPrefetch, imgMime, bindRefs } = await i
 const { BILI_ARTICLE_TOOL, VIDEO_LISTEN_TOOL, bindMediaTools } = await import(new URL(`./media-tools.js?v=${srcVer('./media-tools.js')}`, import.meta.url).href);
 const { FOOD_PICK_TOOL, sendFoodPick, foodHint, bindFood } = await import(new URL(`./food.js?v=${srcVer('./food.js')}`, import.meta.url).href);
 import * as coreLlm from '../../src/llm.js';
+const WORKSHOP_VER = srcVer('./workshop.js');
+const { createWorkshop } = await import(new URL(`./workshop.js?v=${WORKSHOP_VER}`, import.meta.url).href);
 
 const ID = 'codex-bridge';
 const PATCH_KEY = Symbol.for('qq-agent.codex-bridge.onIncoming');
@@ -106,6 +108,9 @@ function settings() {
     learnEffort: EFFORTS.includes(c.learnEffort) ? c.learnEffort : 'low',
     // 成长日记（缺的能力 / 被纠正后改了什么 / 新学到的）：每天这个点私聊发给主人；-1 = 不自动发
     journalReportHour: num(c.journalReportHour, 22, -1, 23),
+    // 工具工坊：大脑自己写新工具（自测通过自动上线，主人 2026-11-02 选的）
+    workshopEnabled: c.workshopEnabled !== false,
+    workshopDailyMax: num(c.workshopDailyMax, 6, 1, 50),
     publicImageGen: c.publicImageGen === true,
     bannedWords: String(c.bannedWords ?? '屙屎').split(/[,，、\s]+/).map((w) => w.trim()).filter(Boolean),
     ignoreStickers: c.ignoreStickers !== false,
@@ -1226,7 +1231,7 @@ function brainDeps() {
     },
     roster: (chatKey) => rosterText(chatKey),
     // 语音梗和"吃什么"自动推荐共用这条增量提示：程序替这条消息做过什么，大脑别重复
-    voices: (sessionId, chatKey) => [voiceHint(sessionId, chatKey), foodHint(sessionId, chatKey)].filter(Boolean).join('\n'),
+    voices: (sessionId, chatKey) => [voiceHint(sessionId, chatKey), foodHint(sessionId, chatKey), workshop().hint(sessionId, chatKey)].filter(Boolean).join('\n'),
     drawRefs: (sessionId, chatKey) => drawPrefetch(sessionId, chatKey),
     onGenerated: (chatKey, items) => {
       const orch = G.orch;
@@ -1300,6 +1305,8 @@ function brainClaims(args) {
 export const hooks = {
   /** 记下"这一轮是主人叫的"的会话：最新一条触发消息是主人发的才算（同 owner_task 的放行口径）。 */
   'before-context'(ctx = {}) {
+    // 有人说机器人说错了：记下来，这一轮提醒大脑先核对（workshop.hint）
+    try { if (ctx.sessionId) workshop().noteTrigger(ctx.sessionId, ctx.triggerEntries, String(G.orch?.onebot?.selfId || '')); } catch { /* ignore */ }
     try {
       const trig = (ctx.triggerEntries || []).filter((e) => e && !e.self);
       const last = trig[trig.length - 1];
@@ -1310,6 +1317,27 @@ export const hooks = {
     } catch { /* ignore */ }
   }
 };
+
+// ── 工具工坊 / 自查（workshop.js）的接线 ─────────────────────────────────
+
+function workshop() {
+  // workshop.js 改了（热重载换了版本）就换新实例；正在写的工具状态在旧实例里，写完自己收尾
+  if (!G.workshop || G.workshopVer !== WORKSHOP_VER) {
+    G.workshop = createWorkshop({
+      runOnce: (opts) => runOnce(opts),
+      locate: () => locateCodex(settings()),
+      settings,
+      log: (m) => logger.info(ID, m),
+      notifyOwner: async (text) => {
+        for (const qq of ownerIds()) {
+          try { await G.orch?.sender?.sendTextBatch(`private:${qq}`, [text]); } catch (e) { logger.warn(ID, `工坊通知主人失败：${e?.message ?? e}`); }
+        }
+      }
+    });
+    G.workshopVer = WORKSHOP_VER;
+  }
+  return G.workshop;
+}
 
 // ── 持续学习（learner.js）的接线 ───────────────────────────────────────
 
@@ -2268,7 +2296,7 @@ const AVATAR_TOOL = {
 export function setup(api) {
   cfg = api.config;
   try { api.registerTool(OWNER_TOOL); } catch (e) { logger.warn(ID, `注册「交给电脑执行」失败：${e.message}`); }
-  for (const t of [AVATAR_TOOL, MEMBER_TOOL, JOURNAL_TOOL, VOICE_MEME_TOOL, VOICE_ADD_TOOL, FILE_SEND_TOOL, REF_GET_TOOL, REF_SAVE_TOOL, SONG_SEARCH_TOOL, SONG_SEND_TOOL, BILI_ARTICLE_TOOL, VIDEO_LISTEN_TOOL, FOOD_PICK_TOOL]) {
+  for (const t of [AVATAR_TOOL, MEMBER_TOOL, JOURNAL_TOOL, VOICE_MEME_TOOL, VOICE_ADD_TOOL, FILE_SEND_TOOL, REF_GET_TOOL, REF_SAVE_TOOL, SONG_SEARCH_TOOL, SONG_SEND_TOOL, BILI_ARTICLE_TOOL, VIDEO_LISTEN_TOOL, FOOD_PICK_TOOL, ...workshop().tools]) {
     try { api.registerTool(t); } catch (e) { logger.warn(ID, `注册「${t.name}」失败：${e.message}`); }
   }
   brain();
@@ -2321,15 +2349,17 @@ export const providers = {
       codexJs: loc.codexJs || '',
       locateError: loc.error || '',
       modes: Object.keys(st.modes || {}).filter((k) => st.modes[k]),
-      brain: s.engine === 'brain' ? brain().status() : null
+      brain: s.engine === 'brain' ? brain().status() : null,
+      workshop: { enabled: s.workshopEnabled, dailyMax: s.workshopDailyMax, ...workshop().status() }
     };
   },
-  'codex.control': async ({ action, chatKey } = {}) => {
+  'codex.control': async ({ action, chatKey, toolId } = {}) => {
     const b = brain();
     if (action === 'start') return { ok: true, status: await b.warmup() };
     if (action === 'restart') { b.restart(); return { ok: true, status: await b.warmup() }; }
     if (action === 'stop') { b.restart(); return { ok: true, status: b.status() }; }
     if (action === 'reset-thread' && chatKey) { b.forget(String(chatKey)); return { ok: true, status: b.status() }; }
+    if (action === 'remove-tool' && toolId) return workshop().remove(String(toolId));
     return { ok: false, error: `不认识的操作：${action}` };
   },
 

@@ -47,10 +47,13 @@ const PREAMBLE = [
   '有人发图说"这才是 X""X 长这样"，或者你画错被纠正还给了图：用 ref_image_save 把那张图存成 X 的参考图，下次就不会再错。',
   '有人问你对某人的印象 / 评价 / "xx 是谁" / "你认识 xx 吗" / "群主是谁"：先看【记忆】里有没有这个人；没有（名字对不上、是 QQ 昵称、是"群主""你主人"这种称呼）就用 member_info 查，查过了还没有才说不熟。'
     + '说印象要挑记忆里两三件具体的事说（他爱玩什么、聊过什么、常玩的梗），每条一件事、分两三条发，别只回一句"很会接梗"这种谁都能套的空话；记忆里没有的别编。',
-  '【被纠正了就改】有人指出你说错了（"不是 xx""你认错了""记错了""他不是群主"）：先判断他说得对不对（拿不准就查知识库 / 联网 / member_info，别人随口一句玩笑不算纠正），确认是你错了就当场改掉，别只嘴上认错：'
+  '【先自查再说】被叫到、回答里有具体事实（游戏机制 / 数值 / 版本、作品和角色设定、人名、时间、价格、规则）又不是十拿九稳时，先用 double_check 把问题和你打算说的话交给另一个 Codex 联网核对，按核对结果说；随口闲聊、表达看法不用。',
+  '【被纠正了就改】有人指出你说错了（"不是 xx""你认错了""记错了""他不是群主"）：先判断他说得对不对（拿不准就 double_check / 查知识库 / 联网 / member_info，别人随口一句玩笑不算纠正），确认是你错了就当场改掉，别只嘴上认错：'
     + '群友印象错了用 memory_remove 删掉错的那条、memory_append 写上对的；知识、梗、作品、人物错了用 kb_remember 记一条更正（写清楚错在哪、对的是什么、谁纠正的）。改完用 learn_log（kind=fix）记一笔。',
   '【做不到的事】有人要你做的事，先想想现有工具能不能做到、能不能几个组合着做（搜歌 / 点歌 / 看群友 / 头像 / 看图看视频 / 知识库 / 联网 / 画图 / 交给电脑执行…），能做就去做；'
     + '真做不到（没有合适的工具、工具报错、拿不到数据）就如实跟对方说，再用 learn_log（kind=gap）写清楚他想要什么、缺的是什么能力、你试过什么——主人每天会看，挑着让人补上。学到以后用得上的新梗、新约定也可以 learn_log（kind=learned）。',
+  '【给自己写工具】缺的能力写一小段代码就能补上（查某个公开接口、算东西、整理数据、抓某个网页的固定信息……），而且以后还会用到：用 tool_request 给自己写一个新工具，写清楚输入、输出、数据从哪来。'
+    + '另一个 Codex 写好、自测通过就自动上线，几分钟后你就能直接调用；这期间先跟对方说一声在做。只是这一次用、或者现有工具组合一下就能做到的，不要写新工具。',
   '涉及某个人的头像（"他的头像""拿我头像画""看看我头像"）：用 get_avatar 按 QQ 号直接取，"我"是说这话的人，"他/她"是被 @ 或被引用的那个人；不要让对方自己发头像。头像拿来画图时同样把它当参考图。',
   '拿头像画图（奶蛙化、X 化、画成某某风格、和某个角色结合……）一律要保留头像原有的特征，让人一眼认出是谁的头像：人物的发型、配饰、衣服、表情特点，有几个人、他们的姿势和相对关系，头像里的文字 / 标志 / 背景元素，以及配色和画风。只换颜色或只换风格是不够的——要把这些特征搬到新形象上（比如给大笑奶龙戴上头像人物的发型、穿上他的衣服，头像里两个人就画两只）。',
   '画图要等半分钟以上：开画前先用 send_message 回一句很短的（"等我画一下"之类），并且一定带 replyToMessageId 引用点图的那条消息，别让人干等着没反应。'
@@ -143,6 +146,16 @@ function deltaText(th, docs) {
   th.seen = [...seen].slice(-MAX_SEEN);
   return parts.join('\n\n');
 }
+
+const handoffPrompt = (why) => [
+  `【交接】这条对话马上要换成一条新对话（原因：${why}）。新对话看不到这里的聊天过程，只能看到人设、规则和最近几十条聊天记录。`,
+  '写一份给新对话看的交接摘要：中文，分条，600 字以内。只写从最近的聊天记录里看不出来、但接着聊要知道的东西：',
+  '1. 最近在聊的话题和进展；谁在等你回什么、你答应过谁还没做的事；',
+  '2. 最近被纠正过的事（错在哪、对的是什么），新学到的梗、说法和约定；',
+  '3. 群里需要注意的人和气氛（谁最近心情不好、谁不喜欢被开玩笑、谁和谁在闹别扭）；',
+  '4. 你自己说过、后面要保持一致的话（比如你说过自己在干什么、喜欢什么）。',
+  '不要复述人设和规则，不要调用任何工具，直接输出摘要正文。没什么要交接的就写"无"。'
+].join('\n');
 
 const zeroUsage = () => ({ prompt: 0, cached: 0, completion: 0, reasoning: 0 });
 function addUsage(into, d) {
@@ -408,6 +421,7 @@ export class CodexBrain {
       const run = this.byThread.get(p.threadId);
       const stale = run && p.turnId && run.turnId && p.turnId !== run.turnId;
       if (!run || stale) { this.server.respond(m.id, { success: false, contentItems: [{ type: 'inputText', text: '这一轮已经结束了' }] }); return; }
+      if (run.handoff) { this.server.respond(m.id, { success: false, contentItems: [{ type: 'inputText', text: '现在只写交接摘要，不用调工具，直接输出摘要正文' }] }); return; }
       run.pending.set(p.callId, m.id);
       if (p.tool === 'send_message' || p.tool === 'send_sticker' || p.tool === 'send_image') run.sentAny = true;
       // 记下每次引用了谁：画好的图按"开画前最后引用的那条"去引用 + @ 点图的人
@@ -610,17 +624,21 @@ export class CodexBrain {
       }
     }
     if (fresh) {
+      // 旧对话还在：先让它写交接摘要（新对话看不到旧对话的过程，只看得到人设和最近的聊天记录）
+      let handoff = '';
+      if (th?.id && why && why !== '新会话') handoff = await this.#handoff(server, th, why, ctx.sessionId);
+      else if (th?.handoff) handoff = th.handoff;   // 旧对话接不回：沿用它开头带的那份
       const r = await server.request('thread/start', {
         cwd: this.deps.workdir, sandbox: 'read-only', approvalPolicy: 'never',
         ...(s.model ? { model: s.model } : {}),
-        developerInstructions: `${PREAMBLE}\n${sysText}`,
+        developerInstructions: `${PREAMBLE}\n${sysText}${handoff ? `\n\n【上一段对话的交接摘要（换新对话前你自己写给自己的）】\n${handoff}` : ''}`,
         dynamicTools: specs.map((f) => ({ type: 'function', name: f.name, description: String(f.description || ''), inputSchema: f.parameters || { type: 'object', properties: {} } }))
       });
-      th = { id: r.thread.id, tools: names, model: s.model || '', rules: PREAMBLE_VER, sent: {}, seen: [], lastInput: 0, at: Date.now() };
+      th = { id: r.thread.id, tools: names, model: s.model || '', rules: PREAMBLE_VER, sent: {}, seen: [], lastInput: 0, at: Date.now(), handoff };
       deltaText(th, [['sys', sysText]]);   // 系统提示词已经作为 developerInstructions 给过了
       server.loaded.add(th.id);
       this.threads[chatKey] = th;
-      this.deps.log(`${chatKey} 开了新的 Codex 大脑对话（${why || '接不回旧对话'}）`);
+      this.deps.log(`${chatKey} 开了新的 Codex 大脑对话（${why || '接不回旧对话'}${handoff ? `，带 ${handoff.length} 字交接摘要` : ''}）`);
     }
 
     th.sent ||= {};
@@ -710,6 +728,41 @@ export class CodexBrain {
     });
     run.pending.clear();
     run.calledAny = true;
+  }
+
+  /**
+   * 换新对话前的交接：在旧对话里开一小轮，让它自己写一份给新对话看的摘要。
+   * 拿不到（超时 / 出错）就退回旧对话开头带的那份，不耽误这一轮回复。用量记到这一轮头上。
+   */
+  async #handoff(server, th, why, sessionId) {
+    const started = Date.now();
+    try {
+      if (!server.loaded.has(th.id)) {
+        await server.request('thread/resume', { threadId: th.id, cwd: this.deps.workdir, sandbox: 'read-only', approvalPolicy: 'never' }, 30000);
+        server.loaded.add(th.id);
+      }
+      const run = {
+        sessionId: `handoff:${th.id}`, chatKey: '', threadId: th.id, turnId: '', pending: new Map(), events: [], waiter: null,
+        done: false, finalText: '', usage: zeroUsage(), generated: [], generatedSent: true, calledAny: false, handoff: true, startedAt: started
+      };
+      this.byThread.set(th.id, run);
+      const r = await server.request('turn/start', { threadId: th.id, input: [{ type: 'text', text: handoffPrompt(why) }], effort: 'low' }, 30000);
+      run.turnId = r.turn?.id || '';
+      const early = run.earlyDone;
+      if (early && (!early.id || early.id === run.turnId)) this.#push(run, { type: 'done', error: '' });
+      await this.#wait(run, null, 120000);
+      this.carry.set(th.id, addUsage(this.carry.get(th.id) || zeroUsage(), run.usage));
+      const text = String(run.finalText || '').trim().slice(0, 2000);
+      if (!text) throw new Error('没写出摘要');
+      if (/^无[。.]?$/.test(text)) return '';
+      this.deps.log(`换新对话前写好交接摘要（${text.length} 字，${Math.round((Date.now() - started) / 1000)} 秒）`);
+      this.deps.onNative(sessionId, { name: '换新对话前的交接摘要', args: { 原因: why }, result: text });
+      return text;
+    } catch (e) {
+      if (this.byThread.get(th.id)?.handoff) this.byThread.delete(th.id);
+      this.deps.log(`交接摘要没拿到（${e?.message ?? e}），${th.handoff ? '沿用上一份' : '新对话不带摘要'}`);
+      return th.handoff || '';
+    }
   }
 
   status() {

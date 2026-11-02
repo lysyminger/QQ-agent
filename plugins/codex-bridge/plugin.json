@@ -39,7 +39,9 @@
     "learnEnabled": true,
     "learnEvery": 80,
     "learnEffort": "low",
-    "imageWaitMs": 7000
+    "imageWaitMs": 7000,
+    "workshopEnabled": true,
+    "workshopDailyMax": 6
   },
   "configSchema": {
     "enabled": {
@@ -181,6 +183,16 @@
       "type": "number",
       "label": "发图后等多久再回（毫秒）",
       "description": "QQ 里常是先发图再打几句话：只发了图没打字时先等这么久，他接着说话就和图一起回，只回一次。默认 7000，填 0 不等。"
+    },
+    "workshopEnabled": {
+      "type": "boolean",
+      "label": "允许自己写工具",
+      "description": "大脑缺能力时用 tool_request 让另一个 Codex 写新工具，静态检查 + 自测通过就自动上线（放在 plugins/self-tools/tools/），上线后私聊告诉主人。关掉后不再写新工具，已经写好的照常用。"
+    },
+    "workshopDailyMax": {
+      "type": "number",
+      "label": "每天最多写几个工具",
+      "description": "所有聊天合计，默认 6。"
     }
   },
   "tools": [
