@@ -1,10 +1,10 @@
 {
   "id": "zjsru-failover",
-  "name": "模型路由：难题 DeepSeek 官方 / 日常学校免费 + 故障切换",
-  "version": "2.2.0",
+  "name": "模型路由：日常学校 DeepSeek / 难题 DeepSeek 官方 + 故障切换",
+  "version": "2.3.0",
   "apiVersion": 1,
   "category": "utility",
-  "description": "按难度选模型：日常闲聊走学校免费主模型，判定为难题（技术/计算/深入提问/长问题，且在叫机器人；或主人提问）的会话走 DeepSeek 官方（付费，按次计 token）。带图片的请求一律走免费路由。任一端点失败一次就在冷却期内改走备用：官方失败或余额不足 → 免费路由；免费主模型失败 → 先走 DeepSeek 官方（可关），超限或带图时退回另一个免费模型。",
+  "description": "按难度选模型：日常闲聊走学校免费的 DeepSeek V4 Flash（2026-11 起不再用学校的 Qwen），判定为难题（技术/计算/深入提问/长问题，且在叫机器人；或主人提问）的会话走 DeepSeek 官方（付费，按次计 token）。带图片的请求一律走免费路由。任一端点失败一次就在冷却期内改走备用：官方失败或余额不足 → 免费路由；免费主模型失败 → 先走 DeepSeek 官方（可关），超限或带图时，填了免费备用模型就走它，没填就继续试主模型。Codex 接管的聊天由 codex-bridge 回复，只有 Codex 出错时才落到这里。",
   "enabledByDefault": true,
   "capabilities": [
     "llm.endpoint-pick",
@@ -12,7 +12,7 @@
     "status.zjsru-failover"
   ],
   "settings": {
-    "fallbackModel": "zjsru-DeepSeek-V4-flash-0731",
+    "fallbackModel": "",
     "cooldownMinutes": 10,
     "routerEnabled": true,
     "hardBaseUrl": "https://api.deepseek.com",
@@ -25,7 +25,7 @@
   "configSchema": {
     "fallbackModel": {
       "type": "string",
-      "description": "免费主模型熔断期间改走的模型（同一学校网关，只能填 zjsru- 开头的免费路由）。",
+      "description": "免费主模型熔断期间改走的模型（同一学校网关，只能填 zjsru- 开头的免费路由，不能填已弃用的 qwen）。留空 = 没有免费备用，主模型故障时走 DeepSeek 官方或继续重试。",
       "label": "免费主模型故障时改用的模型"
     },
     "cooldownMinutes": {

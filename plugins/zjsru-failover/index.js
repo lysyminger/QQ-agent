@@ -1,10 +1,12 @@
 // 模型路由 + 故障切换（学校免费网关 + DeepSeek 官方）
 //
 // ① 按难度路由：日常闲聊走免费主模型（学校网关 zjsru-*），判定为难题的会话走 DeepSeek 官方
-//    （付费，用户 2026-10-18 同意："每次遇到困难的问题都给 deepseek，简单的给 qwen3.8 27b"）。
+//    （付费，用户 2026-10-18 同意："每次遇到困难的问题都给 deepseek"）。
+//    2026-11-02 起去掉了学校的 Qwen：免费主模型改成学校的 DeepSeek V4 Flash，没有第二个免费模型可退。
 //    难度在 before-context 里按触发消息做确定性判定（零 token），按 sessionId 记下，
 //    llm.endpoint-pick 时取用（核心会把 messages / context 一起传进来）。
-// ② 熔断：端点失败一次，冷却期内改走备用 —— 官方失败 → 免费路由；免费主模型失败 → 另一个免费模型。
+// ② 熔断：端点失败一次，冷却期内改走备用 —— 官方失败 → 免费路由；免费主模型失败 → DeepSeek 官方
+//    （可关），官方也不行时如果填了免费备用模型就走它，没填就继续试主模型。
 //    核心 chatCompletionWithRetry 的同模型重试会再次调用 endpoint-pick，所以第一次失败后重试那一发就切过去了。
 //
 // llm.endpoint-pick 只认第一个提供者，所以路由和熔断必须在同一个插件里。
@@ -38,7 +40,8 @@ export function setup(api) {
 function settings() {
   const c = cfg() || {};
   return {
-    fallbackModel: String(c.fallbackModel || 'zjsru-DeepSeek-V4-flash-0731'),
+    // 免费备用：只剩一个免费模型后默认不填；填了也不许是 qwen（已弃用）
+    fallbackModel: /qwen/i.test(String(c.fallbackModel || '')) ? '' : String(c.fallbackModel || '').trim(),
     cooldownMinutes: Math.max(1, Number(c.cooldownMinutes) || 10),
     routerEnabled: c.routerEnabled !== false,
     hardBaseUrl: String(c.hardBaseUrl || 'https://api.deepseek.com').trim(),
@@ -134,15 +137,20 @@ export const providers = {
     // 和难题共用每小时上限；超限 / 官方也熔断 / 带图时退回另一个免费模型
     const current = String(model || '');
     const visionModel = String(getConfig().api?.visionModel || current);
-    if (!current || current === s.fallbackModel) { remember(sid, image ? visionModel : current, image ? '看图' : '备用模型'); return null; }
+    if (!current || (s.fallbackModel && current === s.fallbackModel)) { remember(sid, image ? visionModel : current, image ? '看图' : '备用模型'); return null; }
     if (Date.now() < G.openUntil) {
       if (s.freeFailoverToHard && s.hardApiKey && Date.now() >= G.hardOpenUntil && !image && hardBudgetOk(s)) {
         G.hardCalls.push(Date.now());
         remember(sid, s.hardModel, `${current} 故障，临时切换`);
         return { id: ID_HARD, baseUrl: s.hardBaseUrl, apiKey: s.hardApiKey, model: s.hardModel };
       }
-      remember(sid, s.fallbackModel, `${current} 故障，临时切换`);
-      return { id: ID_FALLBACK, baseUrl, model: s.fallbackModel };
+      if (s.fallbackModel && s.fallbackModel !== current) {
+        remember(sid, s.fallbackModel, `${current} 故障，临时切换`);
+        return { id: ID_FALLBACK, baseUrl, model: s.fallbackModel };
+      }
+      // 没有别的免费模型可退：照旧试主模型（核心的重试 / 回退链还会接着兜）
+      remember(sid, current, `${current} 故障中，没有可退的免费模型`);
+      return { id: ID_PRIMARY, baseUrl, model: current };
     }
     remember(sid, image ? visionModel : current, image ? '看图' : (d?.hard ? '难题（付费上限已满，走免费）' : '日常'));
     return { id: ID_PRIMARY, baseUrl, model: current };
@@ -170,7 +178,7 @@ export const providers = {
     if (status >= 400 && status < 500 && status !== 429) return;
     G.openUntil = Date.now() + s.cooldownMinutes * 60000;
     G.lastError = String(error || status || '').slice(0, 120);
-    const target = s.freeFailoverToHard && s.hardApiKey && Date.now() >= G.hardOpenUntil ? `${s.hardModel}（付费）` : s.fallbackModel;
+    const target = s.freeFailoverToHard && s.hardApiKey && Date.now() >= G.hardOpenUntil ? `${s.hardModel}（付费）` : (s.fallbackModel || '主模型（没有免费备用，继续重试）');
     logger.warn('zjsru-failover', `主模型请求失败（${G.lastError}），${s.cooldownMinutes} 分钟内改走 ${target}`);
   }
 };
@@ -187,7 +195,7 @@ providers['status.zjsru-failover'] = () => {
   const mins = (t) => Math.max(1, Math.ceil((t - now) / 60000));
   const hourAgo = now - 3600000;
   const paidThisHour = G.hardCalls.filter((t) => t > hourAgo).length;
-  const freeTarget = s.freeFailoverToHard && hardOn && !hardDown ? s.hardModel : s.fallbackModel;
+  const freeTarget = s.freeFailoverToHard && hardOn && !hardDown ? s.hardModel : (s.fallbackModel || '无（继续试主模型）');
 
   const text = [
     freeDown ? `⚠ ${daily} 故障 → ${freeTarget}（${mins(G.openUntil)} 分后重试）` : `日常 ${daily}`,
@@ -197,7 +205,7 @@ providers['status.zjsru-failover'] = () => {
     `日常：${daily}${freeDown ? `（故障中，临时走 ${freeTarget}）` : ''}`,
     `看图：${api.visionModel || daily}`,
     hardOn ? `难题：${s.hardModel}${hardDown ? '（故障中，临时走免费路由）' : ''}，本小时付费调用 ${paidThisHour}/${s.maxHardCallsPerHour}` : '难题：未开启（全部走免费路由）',
-    `免费备用：${s.fallbackModel}`
+    `免费备用：${s.fallbackModel || '无'}`
   ];
   const running = [...G.picks].filter(([, v]) => now - v.at < 15 * 60000).map(([sessionId, v]) => ({ sessionId, model: v.model, why: v.why }));
   return {

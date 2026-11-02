@@ -1,12 +1,14 @@
 {
   "id": "zjsru-no-think",
   "name": "学校 tokens：只走免费路由 + 关闭 DeepSeek 思考",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "apiVersion": 1,
   "category": "utility",
-  "description": "tokens.zjsru.edu.cn 的 DeepSeek V4 Flash 默认会长时间思考（简单回复也能想 2000+ token、70s 以上甚至超时），给请求加上 chat_template_kwargs.thinking=false 关掉。",
+  "description": "tokens.zjsru.edu.cn 只走免费路由：发往学校网关的请求，模型不是 zjsru- 开头或是已弃用的 qwen，一律改写成 zjsru-DeepSeek-V4-flash-0731；并给 DeepSeek V4 Flash 加上 chat_template_kwargs.thinking=false，关掉它默认的长时间思考（简单回复也能想 2000+ token、70s 以上甚至超时）。",
   "enabledByDefault": true,
-  "capabilities": ["llm.request-params"],
+  "capabilities": [
+    "llm.request-params"
+  ],
   "settings": {},
   "configSchema": {}
 }
