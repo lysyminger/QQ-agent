@@ -1,0 +1,82 @@
+{
+  "id": "agent-reach",
+  "name": "全网读取（Agent Reach）",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "utility",
+  "entry": "index.js",
+  "description": "让机器人读到自带联网工具够不着的平台：小红书笔记、YouTube / B站字幕、Reddit、X、V2EX、GitHub 仓库和 issue 等。底层调用本机装好的 Agent Reach 命令行（github.com/Panniantong/Agent-Reach，只读，不发帖不评论）。\n\n【先装 Agent Reach】在自己的终端里运行：\n  uv tool install https://github.com/Panniantong/Agent-Reach/releases/latest/download/agent-reach.zip\n  agent-reach setup\n装好后默认能用 B站、YouTube、GitHub、V2EX、网页；小红书 / Reddit / X 要先 agent-reach add 渠道，再 agent-reach login 渠道（建议用小号）。\n\n【机器人能做什么】两个工具：reach_read 按链接读内容；reach_query 在某个平台里搜索或执行其它只读动作。加平台、登录、更新这些管理操作机器人碰不到，只能你在终端里做。\n\n【安全】链接先过核心的内网拦截；开了「浏览锁定」时只读白名单里的站，站内搜索整个关掉。返回内容标成外部资料，提醒模型别照着里面的指令做。",
+  "author": "本地自建",
+  "enabledByDefault": true,
+  "permissions": [],
+  "capabilities": [],
+  "requires": [],
+  "tools": [
+    {
+      "id": "reach_read",
+      "name": "读链接（全网）",
+      "description": "按链接读小红书 / YouTube / Reddit / X / V2EX / GitHub / B站等平台的正文、字幕或评论。",
+      "category": "query",
+      "icon": "👁️"
+    },
+    {
+      "id": "reach_query",
+      "name": "平台内搜索",
+      "description": "在某个平台里搜索，或执行该平台的其它只读动作（如取字幕、看热门）。",
+      "category": "query",
+      "icon": "🔭"
+    }
+  ],
+  "settings": {
+    "enabled": true,
+    "binPath": "",
+    "timeoutSec": 60,
+    "limit": 5,
+    "perItemChars": 1500,
+    "maxChars": 6000,
+    "maxPerMinute": 6,
+    "allowQuery": true
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用全网读取",
+      "description": "关掉后两个工具都不再出现在模型面前。"
+    },
+    "binPath": {
+      "type": "string",
+      "label": "agent-reach 程序路径",
+      "description": "留空自动找：先找 PATH，再找 uv 默认的安装目录（用户目录\\.local\\bin）。找不到时插件显示「依赖未就绪」。"
+    },
+    "timeoutSec": {
+      "type": "number",
+      "label": "单次超时（秒）",
+      "description": "要开专用浏览器的平台（小红书、X 等）第一次会慢一些。默认 60，范围 10~180。"
+    },
+    "limit": {
+      "type": "number",
+      "label": "搜索返回几条",
+      "description": "reach_query 搜索时最多要几条结果，默认 5，最大 10。"
+    },
+    "perItemChars": {
+      "type": "number",
+      "label": "每条最多给模型多少字",
+      "description": "单条结果的正文截断长度，默认 1500。"
+    },
+    "maxChars": {
+      "type": "number",
+      "label": "一次最多给模型多少字",
+      "description": "一次调用返回给模型的总字数上限，默认 6000。调大更全但更费 token。"
+    },
+    "maxPerMinute": {
+      "type": "number",
+      "label": "每分钟最多调用几次",
+      "description": "所有群合计。防止被人刷着用导致平台限流或风控。默认 6。"
+    },
+    "allowQuery": {
+      "type": "boolean",
+      "label": "允许平台内搜索",
+      "description": "关掉后只保留「按链接读」，模型不能自己去各平台搜东西。"
+    }
+  }
+}
