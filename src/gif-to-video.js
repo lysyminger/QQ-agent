@@ -249,3 +249,34 @@ export async function gifFirstFrameDataUrl(buffer) {
     try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch { /* ignore */ }
   }
 }
+
+/**
+ * 把几张静态图按顺序拼成循环播放的 GIF（Codex 大脑 make_gif 用：生图出不了动图时，画几帧再拼）。
+ * 宽压到 ≤480px、调色板两遍生成（palettegen / paletteuse），比直接转色彩好得多。
+ * 各帧要同样的宽高比，否则 ffmpeg 中途换尺寸会失败。
+ * @returns {Promise<{ok: true, bytes: number} | {ok: false, error: string}>}
+ */
+export async function framesToGif(frames, outFile, { fps = 4, width = 480 } = {}) {
+  const ffmpeg = await findFfmpeg();
+  if (!ffmpeg) return { ok: false, error: '电脑上没有 ffmpeg' };
+  const stamp = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const list = path.join(os.tmpdir(), `qqa_frames_${stamp}.txt`);
+  const dur = (1 / fps).toFixed(3);
+  const line = (p) => `file '${String(p).replace(/\\/g, '/').replace(/'/g, "'\\''")}'`;
+  // concat 分离器的老规矩：最后一帧要再写一遍，不然它的 duration 不生效
+  const body = [...frames.flatMap((p) => [line(p), `duration ${dur}`]), line(frames[frames.length - 1])].join('\n');
+  try {
+    fs.writeFileSync(list, body, 'utf8');
+    const okRun = await runOk(ffmpeg, [
+      '-y', '-f', 'concat', '-safe', '0', '-i', list,
+      '-vf', `fps=${fps},scale='min(${width},iw)':-2:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse`,
+      '-loop', '0', '-an', outFile
+    ], 60000);
+    if (!okRun || !fs.existsSync(outFile)) return { ok: false, error: 'ffmpeg 拼接失败（几帧的宽高比不一样？）' };
+    return { ok: true, bytes: fs.statSync(outFile).size };
+  } catch (e) {
+    return { ok: false, error: String(e?.message ?? e) };
+  } finally {
+    try { fs.unlinkSync(list); } catch { /* ignore */ }
+  }
+}

@@ -58,6 +58,7 @@ const PREAMBLE = [
   '拿头像画图（奶蛙化、X 化、画成某某风格、和某个角色结合……）一律要保留头像原有的特征，让人一眼认出是谁的头像：人物的发型、配饰、衣服、表情特点，有几个人、他们的姿势和相对关系，头像里的文字 / 标志 / 背景元素，以及配色和画风。只换颜色或只换风格是不够的——要把这些特征搬到新形象上（比如给大笑奶龙戴上头像人物的发型、穿上他的衣服，头像里两个人就画两只）。',
   '画图要等半分钟以上：开画前先用 send_message 回一句很短的（"等我画一下"之类），并且一定带 replyToMessageId 引用点图的那条消息，别让人干等着没反应。'
     + '画好的图会在这一轮结束后自动发到 QQ，并自动引用你开画前引用的那条、@ 点图的人，不用再调别的工具发，也别说"图在附件里"；生图工具返回空输出也是已经画好了，不要重复画。'
+    + '要动图 / GIF：生图能直接出 GIF 就直接出；出不了就同一个角色、同一构图连画 3～8 帧（只改动作，每帧提示里写清这是第几帧、比上一帧动了哪里），画完调 make_gif 拼成动图——拼好的和画好的图一样自动发出，用过的单帧不会再单独发。'
     + '一轮里有好几个人点图：一张一张来——给 A 回"等我画一下"（引用 A 那条）→ 画 A 的 → 再给 B 回（引用 B 那条）→ 画 B 的；谁的都别漏，画不了的也要引用他说清楚。',
   '群聊里回答某个人（他 @ 你、问你、引用你，或者几个人同时在找你）：send_message 带上 replyToMessageId 引用他那条，一组连发只在第一条带；同一轮要回好几个人，就分开发、每个人各引用各的那条，别把几个人的回答混在一条里。随口插话、没有特定对象时不用引用；引用了就别再 atUserId 同一个人。',
   '引用块末尾的 #数字 就是被引用那条消息的 id：要看被引用的图直接 get_message_images 那个 id，要看详情用 get_message_detail，不用去翻聊天记录找。',
@@ -484,10 +485,20 @@ export class CodexBrain {
   #sendGenerated(run) {
     if (run.generatedSent) return;
     run.generatedSent = true;
+    // 拼进动图的单帧不再单独发（见 make_gif）
+    const files = this.#turnImages(run).filter((x) => !run.gifFrames?.has(x.p));
+    if (!files.length) return;
+    const out = assignGeneratedTargets(files, run.replyMarks || []);
+    this.deps.log(`${run.chatKey} Codex 这一轮画了 ${files.length} 张图，发 ${out.length} 张`);
+    this.deps.onGenerated?.(run.chatKey, out);
+  }
+
+  /** 这一轮画出来的图（含 GIF），按时间排好：[{ p, t }]。 */
+  #turnImages(run) {
     const dir = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images', run.threadId);
     let files = [];
     try {
-      files = fs.readdirSync(dir).filter((f) => /.(png|jpe?g|webp)$/i.test(f))
+      files = fs.readdirSync(dir).filter((f) => /\.(png|jpe?g|webp|gif)$/i.test(f))
         .map((f) => ({ p: path.join(dir, f), t: fs.statSync(path.join(dir, f)).mtimeMs }))
         .filter((x) => x.t >= (run.startedAt || 0) - 2000);
     } catch { /* 没画图 */ }
@@ -495,10 +506,19 @@ export class CodexBrain {
       if (files.some((x) => x.p === p)) continue;
       try { files.push({ p, t: fs.statSync(p).mtimeMs }); } catch { /* 文件没了 */ }
     }
-    if (!files.length) return;
-    const out = assignGeneratedTargets(files, run.replyMarks || []);
-    this.deps.log(`${run.chatKey} Codex 这一轮画了 ${files.length} 张图，发 ${out.length} 张`);
-    this.deps.onGenerated?.(run.chatKey, out);
+    return files.sort((a, b) => a.t - b.t);
+  }
+
+  /** make_gif 用：这个聊天正在进行的这一轮，画了哪些图、存在哪个目录。没有进行中的一轮返回 null。 */
+  turnImages(chatKey) {
+    const th = this.threads[chatKey];
+    const run = th && this.byThread.get(th.id);
+    if (!run || run.done) return null;
+    return {
+      dir: path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images', run.threadId),
+      files: this.#turnImages(run).map((x) => x.p),
+      markFrames: (paths) => { run.gifFrames ??= new Set(); for (const p of paths) run.gifFrames.add(p); }
+    };
   }
 
   #flush(run) {

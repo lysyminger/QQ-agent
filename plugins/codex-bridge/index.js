@@ -60,6 +60,8 @@ const SANDBOX_LABEL = { 'read-only': '只读', 'workspace-write': '可写工作�
 // 群友模式关掉的 Codex 工具：只留联网搜索（实测关掉 shell_tool 后读 config.json 会被拒绝）
 const PUBLIC_DISABLED = ['shell_tool', 'computer_use', 'browser_use', 'browser_use_external', 'in_app_browser', 'apps', 'multi_agent', 'plugins', 'memories', 'code_mode_host'];
 const IMAGE_OK = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+// 发出去的图可以是 GIF（生图直接出的 / make_gif 拼的）；喂给 Codex 看的还是只给静态图
+const SEND_OK = new Set([...IMAGE_OK, '.gif']);
 // Codex 自带的生图工具把图存在 ~/.codex/generated_images/<会话 id>/ 下，回答里不一定提到，跑完按时间捞出来发掉
 const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 const GEN_DIR = path.join(CODEX_HOME, 'generated_images');
@@ -294,7 +296,7 @@ async function performActions(orch, chatKey, actions, asOwner) {
       const urlIn = (a.arg.match(/https?:\/\/[^\s\]]+/i) || [])[0] || '';
       if (a.kind === '图片') {
         // 主人可以发电脑上的图；群友只能发 Codex 刚画的图
-        const local = (asOwner || isGenerated(a.arg)) && path.isAbsolute(a.arg) && fs.existsSync(a.arg) && IMAGE_OK.has(path.extname(a.arg).toLowerCase());
+        const local = (asOwner || isGenerated(a.arg)) && path.isAbsolute(a.arg) && fs.existsSync(a.arg) && SEND_OK.has(path.extname(a.arg).toLowerCase());
         if (!urlIn && !local) continue;
         await orch.sender.sendImage(chatKey, local ? { file: a.arg } : { url: urlIn });
         done.push({ type: 'image', text: `[图片] ${local ? a.arg : urlIn}`, at: Date.now() });
@@ -692,7 +694,7 @@ function generatedSince(thread, since) {
   const dir = path.join(GEN_DIR, thread);
   try {
     return fs.readdirSync(dir)
-      .filter((f) => IMAGE_OK.has(path.extname(f).toLowerCase()))
+      .filter((f) => SEND_OK.has(path.extname(f).toLowerCase()))
       .map((f) => ({ p: path.join(dir, f), t: fs.statSync(path.join(dir, f)).mtimeMs }))
       .filter((x) => x.t >= since - 2000)
       .sort((a, b) => a.t - b.t)
@@ -2245,6 +2247,40 @@ const MEMBER_TOOL = {
   }
 };
 
+// 动图：生图出不了 GIF 时，大脑同一轮里画几帧，再用这个拼起来。拼好的放进这一轮的生图目录，跟画好的图一起自动发
+const GIF_TOOL = {
+  id: 'make_gif',
+  name: '拼动图',
+  category: 'action',
+  icon: '🎞️',
+  description: '把你这一轮刚画的几张图按顺序拼成一个循环播放的 GIF 动图。先用生图连画 3～8 帧（同一角色同一构图，只改动作），再调这个。'
+    + '拼好的动图会在这一轮结束后自动发出去（和画好的图一样引用点图的人），用过的单帧不会单独发。只能拼你这一轮画的图。',
+  parameters: {
+    type: 'object',
+    properties: {
+      frames: { type: 'array', items: { type: 'integer' }, description: '用哪几张、按什么顺序：这一轮画的第几张（从 1 数）。不填 = 这一轮画的全部，按画的先后' },
+      fps: { type: 'number', description: '每秒几帧，1～12，默认 4' }
+    }
+  },
+  async execute(ctx, args = {}) {
+    const turn = G.brain?.turnImages(ctx.chatKey);
+    if (!turn) return { content: '只有大脑这一轮里能拼动图（现在没有进行中的一轮）', isError: true };
+    const stills = turn.files.filter((p) => IMAGE_OK.has(path.extname(p).toLowerCase()));
+    const pick = Array.isArray(args.frames) && args.frames.length
+      ? args.frames.map((n) => stills[Number(n) - 1]).filter(Boolean)
+      : stills;
+    if (pick.length < 2) return { content: `这一轮只画了 ${stills.length} 张图，至少要 2 帧才能拼动图${args.frames?.length ? '（检查 frames 编号）' : ''}`, isError: true };
+    if (pick.length > 24) return { content: '帧太多了，最多 24 帧', isError: true };
+    const fps = Math.min(12, Math.max(1, Number(args.fps) || 4));
+    const out = path.join(turn.dir, `anim-${Date.now()}.gif`);
+    const { framesToGif } = await import('../../src/gif-to-video.js');
+    const r = await framesToGif(pick, out, { fps });
+    if (!r.ok) return { content: `动图没拼成：${r.error}`, isError: true };
+    turn.markFrames(pick);
+    return { content: `拼好了：${pick.length} 帧、每秒 ${fps} 帧、${Math.round(r.bytes / 1024)}KB，这一轮结束后自动发出去，不用再发。` };
+  }
+};
+
 // 群友头像：QQ 的公开头像地址，谁都能看（和在 QQ 里点开资料卡一样），群聊里也开放
 const AVATAR_TOOL = {
   id: 'get_avatar',
@@ -2296,7 +2332,7 @@ const AVATAR_TOOL = {
 export function setup(api) {
   cfg = api.config;
   try { api.registerTool(OWNER_TOOL); } catch (e) { logger.warn(ID, `注册「交给电脑执行」失败：${e.message}`); }
-  for (const t of [AVATAR_TOOL, MEMBER_TOOL, JOURNAL_TOOL, VOICE_MEME_TOOL, VOICE_ADD_TOOL, FILE_SEND_TOOL, REF_GET_TOOL, REF_SAVE_TOOL, SONG_SEARCH_TOOL, SONG_SEND_TOOL, BILI_ARTICLE_TOOL, VIDEO_LISTEN_TOOL, FOOD_PICK_TOOL, ...workshop().tools]) {
+  for (const t of [AVATAR_TOOL, GIF_TOOL, MEMBER_TOOL, JOURNAL_TOOL, VOICE_MEME_TOOL, VOICE_ADD_TOOL, FILE_SEND_TOOL, REF_GET_TOOL, REF_SAVE_TOOL, SONG_SEARCH_TOOL, SONG_SEND_TOOL, BILI_ARTICLE_TOOL, VIDEO_LISTEN_TOOL, FOOD_PICK_TOOL, ...workshop().tools]) {
     try { api.registerTool(t); } catch (e) { logger.warn(ID, `注册「${t.name}」失败：${e.message}`); }
   }
   brain();
