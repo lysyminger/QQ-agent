@@ -1389,6 +1389,17 @@ export function promptSections(context = {}) {
 //   放行条件在代码里判：这一轮最新的触发消息必须是主人发的，交出去的指令是主人的【原话】，
 //   大脑的理解只作参考 —— 群友在聊天记录里写什么都变不成指令。
 
+/** 电脑任务汇报里提到的、这次新做出来的图片 / 动图（绝对路径，存在、在任务开始后改过），最多 MAX_GENERATED 张。 */
+function resultImages(text, since) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/[A-Za-z]:\\[^\s"'<>|*?`，。；：（）()]+?\.(?:gif|png|jpe?g|webp)(?![\w.])/gi)) {
+    const p = path.resolve(m[0]);
+    if (out.includes(p)) continue;
+    try { if (fs.statSync(p).isFile() && fs.statSync(p).mtimeMs >= since - 2000) out.push(p); } catch { /* 不存在 */ }
+  }
+  return out.slice(0, MAX_GENERATED);
+}
+
 const OWNER_TOOL = {
   id: 'owner_task',
   name: '交给电脑执行',
@@ -1416,16 +1427,20 @@ const OWNER_TOOL = {
       args.note ? `QQ 机器人对这句话的理解（仅供参考，可能不准，和原话冲突时以原话为准）：${String(args.note).slice(0, 500)}` : '',
       `可用资源：本地知识库 ${KB_DIR}（learned/ 下每个词条一个 md）；可以联网搜索。`,
       '主人要你"发给我"的文件：做好存到本地，汇报里写出完整绝对路径（如 D:\\xxx\\清单.txt）就行，QQ 那边会用「发文件」工具把它当附件发给主人，你不用自己找发送接口。',
+      '做的是图片 / 动图（png、jpg、webp、gif）：成品存到本地，汇报里写出成品的完整绝对路径，QQ 那边会自动按图片消息发出去（GIF 会直接动）；中间稿、关键帧拼图、预览图别写路径，免得一起发出去。',
       '做完用简洁的中文汇报：做了什么、结果是什么、改了哪些文件；需要主人决定的事列出来。没做成就直说，不要编造。'
     ].filter(Boolean).join('\n\n');
     logger.info(ID, `${ctx.chatKey} 主人让电脑执行：${words.slice(0, 60)}`);
     try {
+      const started = Date.now();
       const r = await runTurn(ctx.chatKey, prompt, images.map((x) => x.path), true, { schema: false });
-      const pics = (r.generated || []).slice(-MAX_GENERATED);
+      // 汇报里写了这次做出来的成品图 / 动图就发成品；没写才发生图工具的原图（那可能只是关键帧拼图）
+      const made = r.ok ? resultImages(r.text, started) : [];
+      const pics = made.length ? made : (r.generated || []).slice(-MAX_GENERATED);
       if (pics.length) await performActions({ sender: ctx.sender, onebot: ctx.onebot }, ctx.chatKey, pics.map((p) => ({ kind: '图片', arg: p })), true);
-      logger.info(ID, `${ctx.chatKey} 电脑执行${r.ok ? '完成' : `出错：${r.error}`}（${r.seconds ?? '?'} 秒）`);
+      logger.info(ID, `${ctx.chatKey} 电脑执行${r.ok ? '完成' : `出错：${r.error}`}（${r.seconds ?? '?'} 秒）${made.length ? `，发成品图 ${made.length} 张` : ''}`);
       return r.ok
-        ? { content: `电脑那边做完了（${r.seconds} 秒）${pics.length ? `，画好的 ${pics.length} 张图已经发到 QQ 了` : ''}。结果里有主人要的文件就用 file_send 按路径发过去。结果：\n${String(r.text || '').slice(0, 3000)}` }
+        ? { content: `电脑那边做完了（${r.seconds} 秒）${pics.length ? `，${made.length ? '做好的成品图（GIF 是会动的图片）' : '画好的图'}共 ${pics.length} 张已经按图片发到 QQ 了，别再用 file_send 发它们` : ''}。结果里有主人要的其他文件就用 file_send 按路径发过去。结果：\n${String(r.text || '').slice(0, 3000)}` }
         : { content: `电脑那边出错了：${r.error}`, isError: true };
     } finally {
       G.running.delete(ctx.chatKey);
@@ -1859,7 +1874,8 @@ const FILE_SEND_TOOL = {
     type: 'object',
     properties: {
       path: { type: 'string', description: '文件完整路径，如 D:\\xxx\\清单.txt' },
-      name: { type: 'string', description: 'QQ 里显示的文件名（可选，默认用原文件名）' }
+      name: { type: 'string', description: 'QQ 里显示的文件名（可选，默认用原文件名）' },
+      asFile: { type: 'boolean', description: '图片（png/jpg/webp/gif）默认按图片消息发、GIF 会直接动；主人明确要"原文件 / 附件"时才填 true' }
     },
     required: ['path']
   },
@@ -1879,6 +1895,16 @@ const FILE_SEND_TOOL = {
     if (!orch) return { content: '还没连上 QQ', isError: true };
     const name = String(args.name || '').trim() || path.basename(file);
     const [kind, id] = String(ctx.chatKey).split(':');
+    // 图片 / 动图默认按图片消息发：GIF 在聊天里直接动，也不占群文件空间（群空间满了会 -403）
+    if (!args.asFile && SEND_OK.has(path.extname(file).toLowerCase()) && st.size <= 20 * 1048576) {
+      try {
+        await orch.sender.sendImage(ctx.chatKey, { file });
+        logger.info(ID, `${ctx.chatKey} 按图片发：${file}（${st.size} 字节）`);
+        return { content: `「${name}」已经按图片发到聊天里了${/\.gif$/i.test(file) ? '（动图，会动）' : ''}。补一句说明就行，别说"已发送"。` };
+      } catch (e) {
+        logger.warn(ID, `按图片发失败（${e?.message ?? e}），改成发文件`);
+      }
+    }
     try {
       if (kind === 'group') await orch.onebot.call('upload_group_file', { group_id: Number(id), file, name }, 180000);
       else await orch.onebot.call('upload_private_file', { user_id: Number(id), file, name }, 180000);
