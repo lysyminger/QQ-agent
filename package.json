@@ -25,7 +25,11 @@
       "!dist/**",
       "!**/*.map",
       "!package-lock.json.bak",
-      "!*.log"
+      "!*.log",
+      "!runtime/**",
+      "!output/**",
+      "!mode/**",
+      "!.claude/**"
     ],
     "win": {
       "target": [
@@ -49,6 +53,7 @@
   "scripts": {
     "start": "electron .",
     "server": "node src/server.js",
+    "dist": "electron-builder --win",
     "setup": "node scripts/setup.mjs",
     "setup:check": "node scripts/setup.mjs --check",
     "setup:napcat": "node scripts/setup-napcat.mjs",

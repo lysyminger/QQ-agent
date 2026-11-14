@@ -1,10 +1,57 @@
-# QQ Agent（桌面端）
+# QQ Agent · 喵喵（lysy-mods 分支）
 
-> **这是 lysy-mods 分支**：在原作者 v0.4 Preview（`fdfd325`）上的本地改造版——合并转发能稳定展开、能看转发里的图，表情包按备注挑、有最小间隔，主人跨群可用，联网抓取/搜图修复，以及一批本机定制插件（Codex 大脑、学校周边吃什么等）。
-> 全部改动见 [doc/本地改动说明.md](doc/本地改动说明.md)。下面是原 README。
+> 这是 [K0nd1us/QQ-agent](https://github.com/K0nd1us/QQ-agent) 的改造版，起点是 v0.4 Preview（`fdfd325`，还带 SnowLuma 集成），之后没有合并上游。机器人在群里叫「喵喵」。
+> 原项目的 README 在下面「原项目说明」一节，原作者的设计和安装细节都还适用。
+
+## 这个分支多了什么
+
+- **合并转发能看全**：两种取法互补，转发里的图按顺序编号、能单看第 N 张，链接过期自动重取。
+- **表情包更像真人**：按收藏备注挑，按 QQ「动画表情」小图发；两张之间有最小间隔；备注写【别发】的不发；群友发的表情会被自动挑一些收进收藏（先让 GPT 看图把关、写备注）。
+- **Codex 当大脑**：本机 Codex CLI 接进回复循环，常驻长对话、每轮只发增量；换对话前写交接摘要；说事实前先让另一个 Codex 联网核对；缺工具时自己写新工具（自测通过才上线）；能画图、做 GIF；主人可以在 QQ 里让它在电脑上干活。
+- **明日方舟「卫戍协议」陪玩**：开雷电模拟器自己打，MaaFramework 截图识别、点击，模型一回合只规划一次，规则能写死的程序直接做；有本地假游戏用来整局整局地训练。
+- **断线不丢消息**：SnowLuma 意外退出自动拉起，重连后补拉断线期间的消息。
+- **学校周边吃什么、知识库自动学词、跨群认人、到点睡觉、一句一句地发** 等一批本机插件。
+- 联网抓取、搜图、主人跨群可用等一串修复。
+
+每一项改了什么、为什么改，见 [doc/本地改动说明.md](doc/本地改动说明.md)。
+
+## 快速开始
+
+```bash
+git clone -b lysy-mods https://github.com/lysyminger/QQ-agent.git qq-agent
+cd qq-agent
+npm install
+npm run setup     # 下载 SnowLuma + 便携 QQ
+npm start         # 或双击 启动QQ机器人.bat；不要窗口用 npm run server
+```
+
+启动后在 SnowLuma 页扫码登录小号，设置页填模型接口和 Key、勾白名单、改人设。各插件要装的东西（Codex CLI、ffmpeg、雷电模拟器、高德 Key……）和打安装包的方法见下面的文档。
+
+## 文档
+
+| 想做什么 | 看这个 |
+|---|---|
+| 从零装好、配好、跑测试、打安装包 | [doc/构建与部署.md](doc/构建与部署.md) |
+| 写角色卡、写插件 / 技能的提示词、调机器人的说话方式 | [doc/提示词怎么写.md](doc/提示词怎么写.md) |
+| 这个分支每一处改动的说明 | [doc/本地改动说明.md](doc/本地改动说明.md) |
+| 提示词在代码里怎么一步步拼出来 | [doc/extend_development/prompt-pipeline.md](doc/extend_development/prompt-pipeline.md) |
+| 自己写插件（规则写死的功能） | [doc/extend_development/plugin-development.md](doc/extend_development/plugin-development.md) |
+| 自己写技能（交给模型判断的功能） | [doc/extend_development/skill-development.md](doc/extend_development/skill-development.md) |
+| 卫戍陪玩接下来要做的群聊玩法（设计稿） | [doc/卫戍陪玩-群聊设计.md](doc/卫戍陪玩-群聊设计.md) |
+
+## 仓库里没有的东西
+
+- **`data/`**：配置（含 API Key）、聊天存档、群友记忆、表情库，全部只在本机。
+- **SnowLuma 和便携 QQ**：第三方软件，`npm run setup` 下载。
+- **别人写的插件**：adaptive-group-style、live-context、repeat-echo、burst-merge、inner-life、life-memory、quote-reply、meme-tracker。它们没带许可证，所以不上传，需要的话找原作者；没有它们机器人照样能跑。
+
+---
+
+# 原项目说明
+
 ![平台](https://img.shields.io/badge/platform-Windows%20%7C%20Electron-lightgrey)
 ![技术栈](https://img.shields.io/badge/stack-Node.js%20%7C%20原生前端-orange)
-![测试](https://img.shields.io/badge/tests-24%20suites%20%E2%80%89620%2B%20assertions-brightgreen)
+![测试](https://img.shields.io/badge/tests-26%20suites%20%E2%80%89620%2B%20assertions-brightgreen)
 一个跑在你自己电脑上的 QQ 群聊机器人：装完双击启动，扫码登录，填个模型 Key 就能用。
 事件驱动 + 无状态会话架构，每次处理的 token 成本恒定可控；所有操作都在图形控制台里完成，不用碰命令行。
 从 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) 彻底改造而来的独立 QQ agent 应用。
@@ -96,7 +143,7 @@ plugins/my-plugin/            skills/my-skill/
 ## 安装与使用
 **三步搞定**（推荐）：
 ```bash
-git clone https://github.com/K0nd1us/QQ-agent.git
+git clone -b lysy-mods https://github.com/lysyminger/QQ-agent.git qq-agent
 cd qq-agent
 npm install
 npm run setup    # 自动下载 SnowLuma + 固定版本便携 QQ
@@ -119,6 +166,7 @@ npm run setup        # 一键下载 SnowLuma + 便携 QQ（幂等，可重复执
 npm run setup:check  # 只检查是否已就绪
 npm start            # 桌面端启动
 npm run server       # headless 模式：浏览器打开 http://127.0.0.1:3210
+npm run dist         # 打 Windows 安装包到 dist/（本分支新增，见 doc/构建与部署.md）
 npm test              # 全量测试：自测 + Skill 架构 + 工具/Skill 审查 + 链接媒体转发 + 回复抢救 + 技能设置 + 表情上下文 + 技能弹窗 + 渲染 + 滚动 + 用量端到端 + 提示词
 npm run test:coverage # 覆盖测试（模块层 + 全部 HTTP 接口 + 端到端链路 + 静态界面层 + 界面接线）
 npm run test:all      # 两套一起跑
