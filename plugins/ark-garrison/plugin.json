@@ -1,10 +1,10 @@
 {
   "id": "ark-garrison",
-  "name": "卫戍协议陪玩（开发中）",
-  "version": "0.1.0",
+  "name": "卫戍协议陪玩",
+  "version": "0.2.0",
   "apiVersion": 1,
   "category": "utility",
-  "description": "让喵喵用小号陪群友打明日方舟「卫戍协议·盟约」：MaaFramework 负责截图 / 识别 / 点击（毫秒级），Codex 只看整理好的局面文字做决定。当前只有底层与测速脚本（node plugins/ark-garrison/bench.mjs），还不会自己玩。依赖装在插件目录：cd plugins/ark-garrison && npm install。",
+  "description": "让喵喵自己开雷电模拟器玩明日方舟「卫戍协议·规程」：雷电自带的 ldconsole 开模拟器和游戏，MaaFramework 截图 / 识别文字 / 点击，Codex 看截图做决定（认识的界面直接处理，作战中只等不问）。只有主人能让它开游戏、开打、停下；进度和有意思的事会截图发回聊天。依赖装在插件目录：cd plugins/ark-garrison && npm install。命令行试玩：node plugins/ark-garrison/play.mjs indie 1。",
   "author": "本机定制",
   "entry": "index.js",
   "permissions": [],
@@ -12,13 +12,25 @@
   "capabilities": ["ark.bench"],
   "requires": [],
   "settings": {
-    "serial": ""
+    "serial": "",
+    "ldDir": "",
+    "ldIndex": 0
   },
   "configSchema": {
     "serial": {
       "type": "string",
       "label": "模拟器序列号",
       "description": "留空 = 自动用找到的第一台（雷电是 emulator-5554，MuMu 一般是 127.0.0.1:16384）。"
+    },
+    "ldDir": {
+      "type": "string",
+      "label": "雷电模拟器目录",
+      "description": "ldconsole.exe 所在目录。留空 = 从注册表自动找（雷电 9）。"
+    },
+    "ldIndex": {
+      "type": "number",
+      "label": "雷电实例序号",
+      "description": "多开管理器里的序号，默认 0。"
     }
   }
 }

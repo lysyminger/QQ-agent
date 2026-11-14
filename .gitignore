@@ -70,3 +70,6 @@ plugins/quote-reply/
 plugins/repeat-echo/
 # 喵喵自己写的工具（工具工坊自动生成，只在本机用）
 plugins/self-tools/tools/
+
+# Codex 大脑 / 电脑任务的产出（含群友头像、下载的视频、别人的 PDF），只留本机
+output/

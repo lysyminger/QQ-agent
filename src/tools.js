@@ -275,15 +275,13 @@ function registerAllTools() {
   registerTool({
     id: 'send_sticker',
     name: '发送表情',
-    description: '发送一个 QQ 收藏表情（一条消息只能一张表情，不能附带文字；想说的话先用 send_message 单独发）。stickerId 从 list_stickers 获取。',
+    description: '发送一个 QQ 收藏表情（单独一条：不能附带文字，也不能引用回复或 @ 人，否则会变成大图；想说的话先用 send_message 单独发）。stickerId 从 list_stickers 获取。',
     category: 'messaging',
     icon: '😀',
     parameters: {
       type: 'object',
       properties: {
-        stickerId: { type: 'string', description: '表情 id' },
-        replyToMessageId: { type: ['integer', 'string'], description: '可选：要引用的消息 id（聊天记录里的 #数字）' },
-        atUserId: { type: ['integer', 'string'], description: '可选：要 @ 的 QQ 号' }
+        stickerId: { type: 'string', description: '表情 id' }
       },
       required: ['stickerId']
     },

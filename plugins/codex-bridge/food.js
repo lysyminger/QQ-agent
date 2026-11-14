@@ -104,6 +104,8 @@ function remember(chatKey, shop) {
 /** 这条群消息该不该自动推荐（不发，只判断）：返回 { ok, reason }。 */
 export function foodAutoCheck(chatKey, entry) {
   if (!entry || entry.self || !groupAllowed(chatKey)) return { ok: false, reason: 'off' };
+  // 拍一拍文案含双方昵称，昵称里的“饿了”等词不是本人发出的吃饭请求。
+  if (entry.isPoke || /^\[拍一拍\]/.test(String(entry.text || ''))) return { ok: false, reason: 'poke' };
   if (!isFoodAsk(deps.messageText(entry))) return { ok: false, reason: 'nomatch' };
   G.foodAuto ||= new Map();
   if (G.foodAuto.has(foodMessageKey(chatKey, entry))) return { ok: false, reason: 'done' };
@@ -150,7 +152,7 @@ export function foodHint(sessionId, chatKey) {
   const sess = G.orch?.sessions?.current?.get?.(sessionId);
   const lines = [];
   for (const e of sess?.trigger || []) {
-    if (!e || e.self || !isFoodAsk(deps.messageText(e))) continue;
+    if (!e || e.self || e.isPoke || /^\[拍一拍\]/.test(String(e.text || '')) || !isFoodAsk(deps.messageText(e))) continue;
     const done = G.foodAuto?.get(foodMessageKey(chatKey, e));
     const tag = `#${e.mid ?? e.id}`;
     if (done) lines.push(`→ 本轮 ${tag} 问吃什么，程序已经自动推荐了「${done.shop.name}」（${shopLine(done.shop)}），别再重复推荐这家；对方想换口味、要便宜点或近一点，再用 food_pick 按条件挑。`);

@@ -38,18 +38,71 @@ function codexUsageRow(label, u, cost) {
   </tr>`;
 }
 
+// ── 卫戍协议训练卡片：GET /api/ark/train/status，按钮 POST /api/ark/train/control ──
+// 暂停只在两局之间生效（联机中途停会被游戏判挂机、违规退出），所以点了「暂停」会先显示「打完这局就停」。
+const ARK_STATE = { running: ['dot-on', '训练中'], pausing: ['dot-on', '打完这局就暂停'], paused: ['dot-off', '已暂停'], stopped: ['dot-off', '没在跑'] };
+function arkTrainCardHtml(a) {
+  if (!a || a.ok === false) return '';
+  const [dot, label] = ARK_STATE[a.state] || ['dot-off', a.state];
+  const rec = a.record || {};
+  return `
+    <div class="snowluma-page-card" id="ark-train-card">
+      <h2>卫戍协议训练</h2>
+      <div class="hint" style="margin-bottom:10px">
+        后台自动打明日方舟「卫戍协议」联合模拟（随机匹配）。<b>暂停</b>在两局之间生效：手上这局会打完再停，免得被游戏判挂机违规；点<b>继续</b>接着打，没在跑就直接启动。
+      </div>
+      <div class="snowluma-state-row">
+        <span class="dot ${dot}"></span>
+        <span>状态：<strong>${esc(label)}</strong></span>
+        ${a.pid ? `<span class="muted">pid ${a.pid}</span>` : ''}
+        ${a.game ? `<span class="muted">${esc(a.game)}${a.round ? ` · 回合 ${a.round}` : ''}</span>` : ''}
+      </div>
+      <div class="snowluma-state-row muted" style="font-size:12px">
+        <span>战绩：赢 ${rec.win || 0} · 输 ${rec.lose || 0}${rec.last ? ` · 上一局 ${esc(rec.last.mode)} ${rec.last.result === 'win' ? '通关' : '没守住'}` : ''}</span>
+      </div>
+      <div class="snowluma-actions">
+        <button class="btn btn-danger" id="ark-pause-btn" ${a.state === 'running' ? '' : 'disabled'}>暂停（打完这局）</button>
+        ${a.state === 'stopped' ? `<select id="ark-mode" class="input" style="width:auto"><option value="indie">单人独立模拟</option><option value="coop">联合模拟（随机匹配）</option></select>` : ''}
+        <button class="btn btn-primary" id="ark-resume-btn" ${a.state === 'running' ? 'disabled' : ''}>${a.state === 'stopped' ? '开始训练' : '继续'}</button>
+        <span id="ark-hint" class="muted" style="font-size:12px"></span>
+      </div>
+      <details style="margin-top:8px"><summary class="muted" style="cursor:pointer">最近日志</summary>
+        <pre style="white-space:pre-wrap;font-size:12px;max-height:260px;overflow:auto">${esc((a.log || []).join('\n'))}</pre>
+      </details>
+    </div>`;
+}
+function bindArkTrainCard() {
+  const hint = (t) => { const el = $('#ark-hint'); if (el) el.textContent = t; };
+  const send = async (action, doing) => {
+    hint(doing);
+    try {
+      const mode = $('#ark-mode')?.value || 'indie';
+      const r = await api('/api/ark/train/control', { method: 'POST', body: JSON.stringify({ action, mode }) });
+      hint(r.ok === false ? `失败：${r.error}` : '好了');
+    } catch (e) { hint(`失败：${e.message}`); }
+    loadCodexPage({ quiet: true });
+  };
+  $('#ark-pause-btn')?.addEventListener('click', () => send('pause', '已标记暂停，打完这局就停…'));
+  $('#ark-resume-btn')?.addEventListener('click', () => send('resume', '正在继续…'));
+}
+
 async function loadCodexPage({ quiet = false } = {}) {
   const box = $('#codex-page');
   if (!box) return;
+  let ark = '';
+  try { ark = arkTrainCardHtml(await api('/api/ark/train/status')); } catch { /* 没有这张卡 */ }
   let st;
   try {
     st = await api('/api/codex/status');
   } catch (e) {
-    if (!quiet) box.innerHTML = `<div class="snowluma-page-card"><h2>Codex 大脑</h2><div class="empty-hint">读取状态失败：${esc(e.message)}</div></div>`;
+    if (!quiet) { box.innerHTML = `${ark}<div class="snowluma-page-card"><h2>Codex 大脑</h2><div class="empty-hint">读取状态失败：${esc(e.message)}</div></div>`; bindArkTrainCard(); }
     return;
   }
   if (!st || st.ok === false) {
-    box.innerHTML = `<div class="snowluma-page-card"><h2>Codex 大脑</h2><div class="empty-hint">${esc(st?.error || 'codex-bridge 插件没有启用')}</div></div>`;
+    box.innerHTML = `${ark}<div class="snowluma-page-card"><h2>Codex 大脑</h2><div class="empty-hint">${esc(st?.error || 'codex-bridge 插件没有启用')}</div></div>`;
+    bindArkTrainCard();
+    clearTimeout(codexPageTimer);
+    codexPageTimer = setTimeout(() => { if (state.tab === 'codex') loadCodexPage({ quiet: true }); }, 5000);
     return;
   }
   const b = st.brain;
@@ -60,7 +113,7 @@ async function loadCodexPage({ quiet = false } = {}) {
   const threads = b?.threads || [];
   const running = b?.running || [];
 
-  box.innerHTML = `
+  box.innerHTML = `${ark}
     <div class="snowluma-page-card">
       <h2>Codex 大脑</h2>
       <div class="hint" style="margin-bottom:12px">
@@ -168,6 +221,7 @@ async function loadCodexPage({ quiet = false } = {}) {
       })()}
     </div>`;
 
+  bindArkTrainCard();
   const hint = (t) => { const el = $('#codex-hint'); if (el) el.textContent = t; };
   const control = async (action, extra = {}, doing = '处理中…') => {
     hint(doing);

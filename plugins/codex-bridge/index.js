@@ -813,8 +813,9 @@ async function runTurn(chatKey, prompt, images, asOwner, { schema = true } = {})
 /**
  * 给其他插件用的一次性 Codex 任务（能力 codex.run）：不留会话、默认只读 + 联网搜索。
  * schema 传 JSON Schema 对象时，Codex 的最终回答被约束成这个结构，结果里带 json。
+ * images 传本地图片路径数组（png/jpg/webp）时一起交给 Codex 看。
  */
-async function runOnce({ prompt, model = '', effort = 'low', sandbox = 'read-only', search = true, schema = null, timeoutMinutes = 5, workdir = '' } = {}) {
+async function runOnce({ prompt, model = '', effort = 'low', sandbox = 'read-only', search = true, schema = null, timeoutMinutes = 5, workdir = '', images = [] } = {}) {
   const s = settings();
   if (!s.enabled) return { ok: false, error: 'Codex 遥控插件已关闭' };
   let schemaFile = '';
@@ -826,6 +827,8 @@ async function runOnce({ prompt, model = '', effort = 'low', sandbox = 'read-onl
   try {
     const r = await spawnCodex({
       prompt, model, effort, sandbox, search, ephemeral: true, schemaFile, timeoutMinutes,
+      // 截图等本地图片（如 ark-garrison 的游戏画面）：只收存在的图片文件
+      images: (Array.isArray(images) ? images : []).filter((p) => typeof p === 'string' && IMAGE_OK.has(path.extname(p).toLowerCase()) && fs.existsSync(p)),
       // 一次性任务默认在空目录里跑，不碰主人的工作目录
       workdir: workdir || PUBLIC_DIR,
       // 这类任务的输入常来自群聊（学词条、整理群友）：和群友模式一样关掉一切能碰电脑的工具

@@ -4,6 +4,7 @@
   "type": "module",
   "description": "卫戍协议陪玩插件的本地依赖（MaaFramework Node 绑定）。依赖装在插件目录里，不进主程序 package.json。",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.322",
     "@maaxyz/maa-node": "5.14.3"
   }
 }

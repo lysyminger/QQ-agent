@@ -71,7 +71,7 @@ export function ensureResource() {
  * 连上模拟器，返回 { maa, ctrl, res, tasker, device, timings }。
  * serial 留空 = 用 adb 找到的第一台设备。
  */
-export async function connect({ adbPath = '', serial = '' } = {}) {
+export async function connect({ adbPath = '', serial = '', input = '' } = {}) {
   const maa = loadMaa();
   fs.mkdirSync(WORK_DIR, { recursive: true });
   // MaaFramework 的调试日志写到 data/ark-garrison/debug，别往插件目录里拉屎
@@ -93,7 +93,10 @@ export async function connect({ adbPath = '', serial = '' } = {}) {
     const seen = devices.map((d) => `${d[0]}(${d[2]})`).join('、') || '无';
     throw new Error(`找不到模拟器${serial ? ` ${serial}` : ''}；adb 能看到的设备：${seen}`);
   }
-  const [, adb, address, screencapMethods, inputMethods, config] = device;
+  const [, adb, address, screencapMethods, foundInput, config] = device;
+  // input 指定触控方式（maatouch / minitouch / adb），留空 = MaaFramework 自己挑
+  const INPUT = { maatouch: 'Maatouch', minitouch: 'MinitouchAndAdbKey', adb: 'AdbShell' };
+  const inputMethods = INPUT[input] && maa.AdbInputMethod?.[INPUT[input]] != null ? maa.AdbInputMethod[INPUT[input]] : foundInput;
 
   t = now();
   const res = new maa.Resource();
@@ -127,9 +130,10 @@ export async function screencap(ctrl) {
  * 对整张图（或 roi 区域）做 OCR，返回 { items: [{ text, box, score }], ms }。
  * roi 是 [x, y, w, h]，坐标按 MaaFramework 的 720p 基准（短边 720）。
  */
-export async function ocr(tasker, image, roi = null) {
+export async function ocr(tasker, image, roi = null, { onlyRec = false } = {}) {
   const t = now();
-  const param = roi ? { roi } : {};
+  // onlyRec：跳过文字检测，把整块 roi 直接当一行字认。小圆角标里的数字（价格、资金）检测模型找不到，只能这样读
+  const param = { ...(roi ? { roi } : {}), ...(onlyRec ? { only_rec: true } : {}) };
   const detail = await tasker.post_recognition('OCR', param, image).wait().get();
   const ms = now() - t;
   const nodeId = detail?.nodes?.[0];
@@ -146,6 +150,41 @@ export async function click(ctrl, x, y) {
   const t = now();
   const ok = await ctrl.post_click(x, y).wait().succeeded;
   return { ok, ms: now() - t };
+}
+
+/** 滑动 / 拖动（坐标按 720p 基准，duration 毫秒）。拖干员上场就靠它。 */
+export async function swipe(ctrl, x1, y1, x2, y2, duration = 500) {
+  const t = now();
+  const ok = await ctrl.post_swipe(x1, y1, x2, y2, duration).wait().succeeded;
+  return { ok, ms: now() - t };
+}
+
+/**
+ * 拖干员上场：照 MAA 部署干员的手法（BattleHelper::deploy_oper + tasks.json 的 BattleSwipeOper）——
+ * 按住停一下让游戏「拿起」干员，先快后慢地移过去（平均速度按距离定，每 1000 像素约 400ms，至少 300ms），
+ * 到目标格子上停住再松手。匀速拖到头就松手，游戏经常不认。
+ */
+export async function dragDeploy(ctrl, x1, y1, x2, y2) {
+  const t = now();
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const dist = Math.hypot(x2 - x1, y2 - y1);
+  const duration = Math.max(300, Math.round(dist / 1000 * 400));
+  const steps = Math.max(8, Math.round(duration / 25));
+  await ctrl.post_touch_down(0, Math.round(x1), Math.round(y1), 1).wait();
+  await sleep(150);
+  for (let i = 1; i <= steps; i++) {
+    const p = 1 - (1 - i / steps) ** 2;   // 先快后慢（末速度趋近 0）
+    await ctrl.post_touch_move(0, Math.round(x1 + (x2 - x1) * p), Math.round(y1 + (y2 - y1) * p), 1).wait();
+    await sleep(duration / steps);
+  }
+  await sleep(250);
+  const ok = await ctrl.post_touch_up(0).wait().succeeded;
+  return { ok, ms: now() - t };
+}
+
+/** 按键（安卓 keycode，4 = 返回）。 */
+export async function key(ctrl, keycode) {
+  return ctrl.post_click_key(keycode).wait().succeeded;
 }
 
 export function close(session) {

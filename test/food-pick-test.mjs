@@ -77,6 +77,21 @@ assert.equal(await sendFoodPick(fakeOrch, group, mk(4, '吃什么', { self: true
 assert.equal(await sendFoodPick(fakeOrch, 'private:10001', mk(5, '吃什么')), null, '私聊不自动推荐');
 assert.equal(await sendFoodPick(fakeOrch, group, mk(6, '今天天气不错')), null, '无关消息不触发');
 
+// 昵称里的“饿了”不能把拍一拍（包括拍别人、拍自己）变成吃饭请求。
+const pokeEntries = [
+  mk(60, '[拍一拍] 饿了的群友(QQ:10001) 拍了拍 我', { isPoke: true }),
+  mk(61, '[拍一拍] 群友(QQ:10002) 拍了拍 饿了的群友(QQ:10001)', { isPoke: true }),
+  mk(62, '[拍一拍] 饿了的群友(QQ:10001) 拍了拍自己', { isPoke: true }),
+  mk(63, '[拍一拍] 饿了的群友(QQ:10001) 拍了拍 我')
+];
+const beforePokes = sent.length;
+for (const entry of pokeEntries) {
+  assert.equal(foodAutoCheck(group, entry).reason, 'poke', '拍一拍在关键词匹配前被排除');
+  assert.equal(await sendFoodPick(fakeOrch, group, entry), null, '拍一拍不推荐餐馆');
+}
+assert.equal(sent.length, beforePokes, '拍一拍没有调用发送器');
+assert.ok(await sendFoodPick(fakeOrch, group, mk(64, '今天吃什么', { senderName: '饿了的群友' })), '同一群友正常问吃什么仍推荐');
+
 // 不限次数：群友连着问每次都推荐，最近推过的不重复
 const picks = [];
 for (let i = 0; i < 12; i++) picks.push((await sendFoodPick(fakeOrch, group, mk(100 + i, '吃什么', { senderId: String(20000 + i) })))?.id);
@@ -97,11 +112,12 @@ assert.ok(await sendFoodPick(flaky, `${group}-4`, mk(10, '吃啥')), '引用失�
 assert.equal(flaky.sender.calls, 2);
 
 // ── 给大脑的提示 ──
-globalThis.__codexBridge.orch = { sessions: { current: new Map([['s1', { trigger: [mk(1, '中午吃什么'), mk(50, '夜宵吃啥'), mk(6, '今天天气不错')] }]]) } };
+globalThis.__codexBridge.orch = { sessions: { current: new Map([['s1', { trigger: [mk(1, '中午吃什么'), mk(50, '夜宵吃啥'), mk(6, '今天天气不错'), ...pokeEntries] }]]) } };
 const hint = foodHint('s1', group);
 assert.match(hint, new RegExp(`#1 问吃什么，程序已经自动推荐了「${first.name.replace(/[()]/g, '\\$&')}」`), '提示：已推荐哪家');
 assert.match(hint, /#50 像在问吃什么，自动推荐没发出去/, '提示：没发出去的');
 assert.ok(!hint.includes('#6'), '无关消息不提示');
+assert.ok(!/拍一拍|饿了的群友/.test(hint), '拍一拍不向大脑注入问吃什么的提示');
 assert.equal(foodHint('s1', 'private:1'), '', '私聊没有提示');
 
 // ── food_pick 工具 ──

@@ -309,6 +309,31 @@ export function createRoutes(deps) {
       }
     },
     {
+      // 卫戍协议训练卡片（Codex 页）：训练在不在跑、暂停 / 继续。只碰标记文件和子进程，插件没启用也能用（本机定制插件，不在仓库里就报没有）
+      method: 'GET', pattern: '/api/ark/train/status',
+      handler: async ({ res, json }) => {
+        try {
+          const ctl = await import('../plugins/ark-garrison/trainctl.js');
+          return json(res, 200, ctl.status());
+        } catch (error) {
+          return json(res, 200, { ok: false, error: `卫戍训练不可用：${String(error?.message ?? error)}` });
+        }
+      }
+    },
+    {
+      method: 'POST', pattern: '/api/ark/train/control',
+      handler: async ({ req, res, json }) => {
+        const body = await bodyOf(req);
+        try {
+          const ctl = await import('../plugins/ark-garrison/trainctl.js');
+          const r = ctl.control({ action: String(body.action || ''), mode: body.mode === 'coop' ? 'coop' : 'indie' });
+          return json(res, r?.ok === false ? 400 : 200, r);
+        } catch (error) {
+          return json(res, 500, { ok: false, error: String(error?.message ?? error) });
+        }
+      }
+    },
+    {
       // 手动补拉一次：断线期间漏掉的消息（重连时会自动跑，这里给面板一个按钮）
       method: 'POST', pattern: '/api/snowluma/backfill',
       handler: async ({ res, json }) => {

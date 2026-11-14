@@ -354,9 +354,13 @@ export class OneBotClient {
     return this.sendSegments(kind, id, segments);
   }
 
-  async sendSticker(kind, id, imageUrl, { replyToMessageId = null, atUserId = null } = {}) {
-    const segments = OneBotClient.#replyAtSegments({ replyToMessageId, atUserId });
-    segments.push({ type: 'image', data: { file: String(imageUrl) } });
+  // 表情包永远单独一条、不带回复和 @：QQ 只有"整条消息就一张 sub_type=1 图"时才按表情小图显示，
+  // 带上 reply / at 段就变成普通图文消息，又撑成大图（2026-11-13 群里实测）。
+  // 参数保留只为兼容调用方，这里有意忽略。
+  async sendSticker(kind, id, imageUrl, _ignored = {}) {
+    // sub_type=1 是 QQ 的"表情"图片类型：对方那边按表情包小图显示（和从表情面板发的一样），
+    // 不带它就是普通图片，会撑成大图。summary 是会话列表 / 通知里显示的文字。
+    const segments = [{ type: 'image', data: { file: String(imageUrl), sub_type: 1, summary: '[动画表情]' } }];
     return this.sendSegments(kind, id, segments);
   }
 

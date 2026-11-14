@@ -1,0 +1,49 @@
+{
+  "id": "sticker-auto-collect",
+  "name": "表情包自动收集",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "entry": "index.js",
+  "description": "群友发的表情包，喵喵会随机挑一些收进自己的 QQ 收藏，之后聊天时就能拿来用。\n\n【收哪些】只收表情包（QQ 标成 [动画表情] 这类），照片和截图不收。没见过的表情按「随机收藏概率」抽；同一张被好几个人发过（群里流行的）就直接收。\n\n【先看一眼再收】收之前让 GPT（codex-bridge）看图：低俗、擦边、血腥、广告二维码、聊天截图、普通照片这些一律跳过；合适的按「画面 + 什么时候用」写好备注（≤20 字）再入 QQ 收藏。\n\n【收多少】默认不设上限（每天几张、总数都可以在下面限制，0 = 不限）；发表情包的频率不归这里管。\n\n【记录】data/sticker-auto-collect.json：见过哪些、收了哪些、为什么没收。",
+  "author": "lysy",
+  "enabledByDefault": true,
+  "capabilities": [
+    "sticker-auto-collect.status"
+  ],
+  "requires": [],
+  "settings": {
+    "enabled": true,
+    "chance": 0.15,
+    "popularSenders": 2,
+    "maxPerDay": 0,
+    "maxAuto": 0
+  },
+  "configSchema": {
+    "enabled": {
+      "type": "boolean",
+      "label": "启用表情包自动收集",
+      "description": "关掉后不再自动收；已经收进来的表情不受影响。"
+    },
+    "chance": {
+      "type": "number",
+      "label": "随机收藏概率（0~1）",
+      "description": "群友发一张没见过的表情包时，有多大概率考虑收它。默认 0.15。"
+    },
+    "popularSenders": {
+      "type": "number",
+      "label": "几个人发过就直接收",
+      "description": "同一张表情被这么多不同的人发过，就不用抽签直接收（仍会先看图把关）。默认 2；填 0 关掉这条。"
+    },
+    "maxPerDay": {
+      "type": "number",
+      "label": "每天最多收几张",
+      "description": "0 = 不限（默认）。"
+    },
+    "maxAuto": {
+      "type": "number",
+      "label": "自动收藏总数上限",
+      "description": "自动收进来的表情累计到这个数就停。0 = 不限（默认）。"
+    }
+  }
+}

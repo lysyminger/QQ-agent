@@ -1,0 +1,24 @@
+{
+  "id": "jujutsu-kaisen-reply",
+  "name": "咒术回战·新宿决战",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "category": "message",
+  "description": "群里出现「咒术回战 / 新宿 / 五条悟 / 宿傩 / 新宿决战」等关键词时，把那段固定文案一字不差地发到群里。",
+  "author": "QQ Agent 用户",
+  "enabledByDefault": true,
+  "requires": [],
+  "capabilities": [],
+  "settings": {},
+  "configSchema": {},
+  "prompt": {
+    "sections": [
+      {
+        "id": "jujutsu-kaisen-reply-note",
+        "title": "咒术回战关键词固定回复",
+        "priority": 60,
+        "content": "群友的发言里出现「咒术回战」「新宿」「五条悟」「宿傩」「新宿决战」等咒术回战相关词时，必须调用 jujutsu_kaisen_reply 工具，由它把指定的整段文案直接发到群里。不要在正文里自己复述或改写那段文案，也不要另外再发一遍——工具已经发出去了。如果一句话里同时出现好几个关键词，只调用一次。"
+      }
+    ]
+  }
+}
